@@ -1,5 +1,10 @@
 import type { InterceptedPost } from '../interceptors/types';
-import type { AccountCredentials, PlatformId, PostResult } from '../platforms/types';
+import type {
+  AccountCredentials,
+  AccountStatus,
+  PlatformId,
+  PostResult,
+} from '../platforms/types';
 import type { SerializedMedia } from './media-transport';
 
 // The wire-format version of PostContent. Blob survives chrome.runtime
@@ -20,6 +25,11 @@ export type AuthenticateResponse =
   | { success: true; credentials: AccountCredentials }
   | { success: false; error: string };
 
+export type AccountStatusEntry = {
+  accountId: string;
+  status: AccountStatus;
+};
+
 export type Message =
   | {
       type: 'CROSSPOST_REQUEST';
@@ -33,7 +43,9 @@ export type Message =
       type: 'AUTHENTICATE';
       payload: { platformId: PlatformId; params: Record<string, string> };
     }
-  | { type: 'AUTHENTICATE_RESPONSE'; payload: AuthenticateResponse };
+  | { type: 'AUTHENTICATE_RESPONSE'; payload: AuthenticateResponse }
+  | { type: 'GET_ACCOUNT_STATUSES'; payload: null }
+  | { type: 'GET_ACCOUNT_STATUSES_RESPONSE'; payload: AccountStatusEntry[] };
 
 export type MessageOf<T extends Message['type']> = Extract<Message, { type: T }>;
 

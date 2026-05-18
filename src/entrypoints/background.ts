@@ -1,9 +1,14 @@
 import { logger } from '../lib/logger';
 import { deserializeMediaAttachments } from '../lib/media-transport';
-import type { AuthenticateResponse, CrossPostResultEntry, Message } from '../lib/messaging';
+import type {
+  AccountStatusEntry,
+  AuthenticateResponse,
+  CrossPostResultEntry,
+  Message,
+} from '../lib/messaging';
 import { onMessage } from '../lib/messaging';
 import { getAdapter } from '../platforms';
-import type { PostContent, PostResult } from '../platforms/types';
+import type { AccountStatus, PostContent, PostResult } from '../platforms/types';
 import { addCredential, loadCredentials } from '../storage/credentials';
 
 const X_UPLOAD_DNR_RULE_ID = 1;
@@ -102,6 +107,31 @@ export default defineBackground(() => {
         const response: AuthenticateResponse = { success: false, error: String(err) };
         return response;
       }
+    }
+
+    if (msg.type === 'GET_ACCOUNT_STATUSES') {
+      const creds = await loadCredentials();
+      const entries = await Promise.all(
+        creds.map(async (cred): Promise<AccountStatusEntry> => {
+          try {
+            const adapter = getAdapter(cred.platformId);
+            let status: AccountStatus;
+            if (adapter.getStatus) {
+              status = await adapter.getStatus(cred);
+            } else {
+              const ok = await adapter.validateCredentials(cred);
+              status = { ok, severity: ok ? 'green' : 'red' };
+            }
+            return { accountId: cred.accountId, status };
+          } catch (err) {
+            return {
+              accountId: cred.accountId,
+              status: { ok: false, severity: 'red', message: String(err) },
+            };
+          }
+        }),
+      );
+      return { type: 'GET_ACCOUNT_STATUSES_RESPONSE', payload: entries };
     }
 
     if (msg.type === 'CROSSPOST_REQUEST') {

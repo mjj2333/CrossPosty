@@ -401,4 +401,49 @@ export const xAdapter: PlatformAdapter = {
     const data = credentials.data as unknown as XSessionData;
     return Boolean(data.authToken && data.ct0);
   },
+
+  // Pre-flight status reflects two independent pieces:
+  //   - whether the user is still logged in to x.com (auth_token + ct0 cookies)
+  //   - whether we have a fresh template captured from a native compose
+  // Cross-posting needs both. Yellow = "you can fix this by posting once".
+  async getStatus(_credentials) {
+    const cookies = await chrome.cookies.getAll({ domain: 'x.com' });
+    const hasAuth = cookies.some((c) => c.name === 'auth_token');
+    const hasCt0 = cookies.some((c) => c.name === 'ct0');
+    if (!hasAuth || !hasCt0) {
+      return {
+        ok: false,
+        severity: 'red',
+        message: 'Not logged in to x.com. Log in there, then return here.',
+      };
+    }
+    const template = await loadXTemplate();
+    if (!template) {
+      return {
+        ok: false,
+        severity: 'yellow',
+        message: 'No request template yet. Post one tweet natively on x.com to enable cross-posting.',
+      };
+    }
+    const ageDays = (Date.now() - template.capturedAt) / 86_400_000;
+    if (ageDays > 7) {
+      return {
+        ok: true,
+        severity: 'yellow',
+        message: `Template ${Math.floor(ageDays)} days old. Post natively to refresh.`,
+      };
+    }
+    const ageHours = (Date.now() - template.capturedAt) / 3_600_000;
+    const ageLabel =
+      ageHours < 1
+        ? 'just now'
+        : ageHours < 24
+          ? `${Math.floor(ageHours)}h ago`
+          : `${Math.floor(ageDays)}d ago`;
+    return {
+      ok: true,
+      severity: 'green',
+      message: `Logged in. Template captured ${ageLabel}.`,
+    };
+  },
 };

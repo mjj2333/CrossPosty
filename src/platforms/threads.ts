@@ -254,4 +254,43 @@ export const threadsAdapter: PlatformAdapter = {
     const session = await readSessionCookie();
     return Boolean(session?.value);
   },
+
+  async getStatus() {
+    const session = await readSessionCookie();
+    if (!session?.value) {
+      return {
+        ok: false,
+        severity: 'red',
+        message: 'Not logged in to threads.com. Log in there, then return here.',
+      };
+    }
+    const template = await loadThreadsTemplate();
+    if (!template) {
+      return {
+        ok: false,
+        severity: 'yellow',
+        message: 'No request template yet. Post once natively on threads.com to enable cross-posting.',
+      };
+    }
+    const ageDays = (Date.now() - template.capturedAt) / 86_400_000;
+    if (ageDays > 7) {
+      return {
+        ok: true,
+        severity: 'yellow',
+        message: `Template ${Math.floor(ageDays)} days old. Post natively to refresh.`,
+      };
+    }
+    const ageHours = (Date.now() - template.capturedAt) / 3_600_000;
+    const ageLabel =
+      ageHours < 1
+        ? 'just now'
+        : ageHours < 24
+          ? `${Math.floor(ageHours)}h ago`
+          : `${Math.floor(ageDays)}d ago`;
+    return {
+      ok: true,
+      severity: 'green',
+      message: `Logged in. Template captured ${ageLabel}.`,
+    };
+  },
 };

@@ -29,6 +29,16 @@ export type MediaSupport = {
   supportedMimeTypes: string[];
 };
 
+// Per-account status used by the popup's pre-flight check. Adapters that
+// need to distinguish "broken" from "working but needs attention" (e.g.
+// X/Threads with a stale template) implement getStatus(); everything else
+// gets a green/red mapping from validateCredentials() by default.
+export type AccountStatus = {
+  ok: boolean;
+  severity: 'green' | 'yellow' | 'red';
+  message?: string;
+};
+
 export interface PlatformAdapter {
   id: PlatformId;
   displayName: string;
@@ -37,4 +47,5 @@ export interface PlatformAdapter {
   authenticate(params: Record<string, string>): Promise<AccountCredentials>;
   post(content: PostContent, credentials: AccountCredentials): Promise<PostResult>;
   validateCredentials(credentials: AccountCredentials): Promise<boolean>;
+  getStatus?(credentials: AccountCredentials): Promise<AccountStatus>;
 }
