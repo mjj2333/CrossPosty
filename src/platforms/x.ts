@@ -112,6 +112,7 @@ async function uploadXMedia(
     throw new Error('X media INIT returned no media_id_string');
   }
   const mediaId = initJson.media_id_string;
+  console.log('[CrossPosty] X INIT ok', { mediaId, bytes: blob.size, mimeType });
 
   // APPEND - single segment for v1 (sufficient for typical images).
   const appendForm = new FormData();
@@ -129,6 +130,7 @@ async function uploadXMedia(
   if (!appendRes.ok) {
     throw new Error(await describeFailure(appendRes, 'APPEND'));
   }
+  console.log('[CrossPosty] X APPEND ok', { mediaId, status: appendRes.status });
 
   // FINALIZE
   const finalizeParams = new URLSearchParams({
@@ -143,7 +145,61 @@ async function uploadXMedia(
   if (!finalizeRes.ok) {
     throw new Error(await describeFailure(finalizeRes, 'FINALIZE'));
   }
+  const finalizeJson = (await finalizeRes.json()) as {
+    media_id_string?: string;
+    processing_info?: {
+      state?: string;
+      check_after_secs?: number;
+      progress_percent?: number;
+      error?: { name?: string; message?: string };
+    };
+  };
+  console.log('[CrossPosty] X FINALIZE ok', {
+    mediaId,
+    processing: finalizeJson.processing_info ?? null,
+  });
+
+  // If the media needs background processing, poll STATUS until done. For
+  // static images this branch never fires; X typically returns processing_info
+  // null on FINALIZE. For larger images / GIFs / videos we have to wait.
+  if (finalizeJson.processing_info) {
+    await waitForXMediaProcessing(mediaId, finalizeJson.processing_info, commonHeaders, baseUrl);
+  }
+
   return mediaId;
+}
+
+async function waitForXMediaProcessing(
+  mediaId: string,
+  initial: { state?: string; check_after_secs?: number; error?: { message?: string } },
+  commonHeaders: Record<string, string>,
+  baseUrl: string,
+): Promise<void> {
+  let current = initial;
+  const maxWaitMs = 60_000;
+  const startedAt = Date.now();
+  while (current.state && current.state !== 'succeeded') {
+    if (current.state === 'failed') {
+      throw new Error(`X media processing failed: ${current.error?.message ?? 'unknown'}`);
+    }
+    if (Date.now() - startedAt > maxWaitMs) {
+      throw new Error('X media processing timed out');
+    }
+    const wait = Math.max(1, current.check_after_secs ?? 1) * 1000;
+    await new Promise((r) => setTimeout(r, wait));
+    const statusUrl = `${baseUrl}?command=STATUS&media_id=${encodeURIComponent(mediaId)}`;
+    const res = await fetch(statusUrl, {
+      method: 'GET',
+      credentials: 'include',
+      headers: commonHeaders,
+    });
+    if (!res.ok) throw new Error(`X media STATUS failed (HTTP ${res.status})`);
+    const json = (await res.json()) as {
+      processing_info?: typeof initial;
+    };
+    current = json.processing_info ?? { state: 'succeeded' };
+    console.log('[CrossPosty] X STATUS poll', { mediaId, state: current.state });
+  }
 }
 
 async function readCookie(name: string): Promise<string | null> {
