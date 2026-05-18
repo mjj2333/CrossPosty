@@ -21,7 +21,8 @@ export const bskyInterceptor: SourceInterceptor = {
   install(onIntercept) {
     function handle(ev: Event) {
       const detail = (ev as CustomEvent<{ url: string; body: string }>).detail;
-      if (!/bsky\.social\/xrpc\/com\.atproto\.repo\.createRecord/.test(detail.url)) return;
+      // Match any AT Protocol PDS host (bsky.social, *.bsky.network, custom).
+      if (!/\/xrpc\/com\.atproto\.repo\.createRecord/.test(detail.url)) return;
       const post = parseCreateRecordBody(detail.body);
       if (post) onIntercept(post, () => undefined);
     }

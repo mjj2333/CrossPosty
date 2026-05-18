@@ -25,15 +25,23 @@ export default defineContentScript({
     function isInteresting(url: string): boolean {
       return (
         /(?:x\.com|twitter\.com)\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(url) ||
-        /bsky\.social\/xrpc\/com\.atproto\.repo\.createRecord/.test(url)
+        // BlueSky is federated — each user's repo lives on a PDS host that
+        // can be bsky.social, *.bsky.network, or a self-hosted domain. Match
+        // the AT Protocol RPC path regardless of host. The interceptor in
+        // src/interceptors/bsky.ts further filters by body shape (only post
+        // records, not likes/follows/etc.) so this loose URL match is safe.
+        /\/xrpc\/com\.atproto\.repo\.createRecord/.test(url)
       );
     }
 
-    // Loose match for any GraphQL-shaped URL — used as a debug log so we can
-    // see what's actually happening even if X renames CreateTweet to something
-    // else.
+    // Loose match for any compose-shaped URL — used as a debug log so we can
+    // see what's actually happening even if endpoint names shift.
     function isGraphqlish(url: string): boolean {
-      return /\/graphql\//.test(url) || /CreateTweet|CreatePost|CreateNote/i.test(url);
+      return (
+        /\/graphql\//.test(url) ||
+        /CreateTweet|CreatePost|CreateNote/i.test(url) ||
+        /\/xrpc\/com\.atproto/.test(url)
+      );
     }
 
     function dispatchIntercept(url: string, body: string, headers: Record<string, string>): void {
