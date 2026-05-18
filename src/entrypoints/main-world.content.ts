@@ -50,7 +50,13 @@ export default defineContentScript({
     // Pure read-only CDN hosts - bypass entirely.
     const CDN_BYPASS_RE = /(?:^https?:\/\/)?(?:pbs\.twimg\.com|video\.twimg\.com|ton\.x\.com)\//;
     // Media upload endpoints - we tap these for capture.
-    const X_MEDIA_UPLOAD_RE = /(?:upload\.(?:twitter|x)\.com)\/i\/media\/upload\.json/;
+    // Match any path under upload.(twitter|x).com so we don't miss new
+    // endpoint variants. The capture functions still filter further by
+    // command=APPEND etc.
+    const X_MEDIA_UPLOAD_RE = /upload\.(?:twitter|x)\.com\//;
+    // Diagnostic regex: log ANY URL on an X-related upload-ish host so we
+    // can see what X is actually using when our specific capture misses.
+    const X_UPLOAD_HOST_LOG_RE = /(?:upload|ads-api|api)\.(?:twitter|x)\.com\//;
     const BSKY_UPLOAD_BLOB_RE = /\/xrpc\/com\.atproto\.repo\.uploadBlob/;
 
     // ---- Compose intercept dispatch -------------------------------------
@@ -103,6 +109,17 @@ export default defineContentScript({
 
           if (CDN_BYPASS_RE.test(url)) return origFetch(input, init);
 
+          // Diagnostic: log all upload-host hits so we can see what URL X
+          // is actually using if our specific capture path doesn't fire.
+          if (X_UPLOAD_HOST_LOG_RE.test(url)) {
+            console.log('[CrossPosty] fetch upload-host URL', url, {
+              method: init?.method ?? 'GET',
+              hasInit: !!init,
+              hasInitBody: !!init?.body,
+              inputIsRequest: input instanceof Request,
+            });
+          }
+
           // Media uploads: BlueSky needs response tap to learn cid; X has
           // media_id in the request body so we can capture without awaiting
           // the response.
@@ -110,6 +127,7 @@ export default defineContentScript({
             return await tapBskyUpload(url, input, init, origFetch);
           }
           if (X_MEDIA_UPLOAD_RE.test(url)) {
+            console.log('[CrossPosty] X media tap firing for', url);
             tapXMediaUpload(input, init).catch((err) =>
               console.warn('[CrossPosty] X media tap failed', err),
             );
@@ -356,13 +374,29 @@ export default defineContentScript({
 
         if (CDN_BYPASS_RE.test(url)) return origSend.call(this, body);
 
-        // X via XHR: capture FormData append synchronously, fire-and-forget.
-        if (X_MEDIA_UPLOAD_RE.test(url) && body instanceof FormData) {
-          captureXAppendFromFormData(body, null);
+        // Diagnostic: log XHRs to any upload host (URL + body type) so we
+        // can see how X is uploading when capture misses.
+        if (X_UPLOAD_HOST_LOG_RE.test(url)) {
+          console.log('[CrossPosty] XHR upload-host URL', url, {
+            method: t.__crossposty_method,
+            bodyType:
+              body == null
+                ? 'null'
+                : typeof body === 'string'
+                  ? 'string'
+                  : (body.constructor?.name ?? typeof body),
+          });
+        }
+
+        if (X_MEDIA_UPLOAD_RE.test(url)) {
+          if (body instanceof FormData) {
+            console.log('[CrossPosty] X XHR media tap firing (FormData)', url);
+            captureXAppendFromFormData(body, null);
+          } else {
+            console.log('[CrossPosty] X XHR media tap: body not FormData', url, body?.constructor?.name);
+          }
           return origSend.call(this, body);
         }
-        // BlueSky upload via XHR is rare and we can't tap the response from
-        // inside send(); skip for v1 (the fetch path handles bsky.app).
         if (BSKY_UPLOAD_BLOB_RE.test(url)) {
           return origSend.call(this, body);
         }
