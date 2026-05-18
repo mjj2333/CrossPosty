@@ -42,6 +42,8 @@ export default defineConfig({
       'https://www.threads.com/*',
       'https://threads.com/*',
       'https://i.instagram.com/*',
+      'https://substack.com/*',
+      'https://*.substack.com/*',
     ],
     // Mastodon is federated — instance hostname not known until login time.
     // Popup calls chrome.permissions.request() with the typed instance before

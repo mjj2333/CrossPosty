@@ -50,6 +50,8 @@ function fieldsFor(platformId: AddableId, bskyMethod: BskyAuthMethod): Field[] {
       return [];
     case 'threads':
       return [];
+    case 'substack':
+      return [];
   }
 }
 
@@ -63,6 +65,8 @@ function helperFor(platformId: AddableId, bskyMethod: BskyAuthMethod): string | 
       return 'Enter your instance (e.g. mastodon.social). A login window will open - sign in once and authorize CrossPosty.';
     case 'threads':
       return "Make sure you're logged in at threads.net, then click Connect. After connecting, post one thread natively so CrossPosty can learn the current request shape - then cross-posts to Threads work.";
+    case 'substack':
+      return "Make sure you're logged in at substack.com, then click Connect. After connecting, post one Note natively on your publication so CrossPosty can learn the current request shape - then cross-posts to Substack work.";
     case 'bluesky':
       return bskyMethod === 'oauth'
         ? 'Enter your handle. A login window will open — sign in once on bsky.app and authorize CrossPosty. No app password needed.'

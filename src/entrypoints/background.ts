@@ -29,6 +29,7 @@ function buildReconnectParams(
     case 'x':
     case 'threads':
     case 'linkedin':
+    case 'substack':
       // Cookie-based — authenticate() reads from chrome.cookies, no
       // params needed beyond the platform being recognised.
       return {};

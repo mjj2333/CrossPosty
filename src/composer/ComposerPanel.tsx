@@ -21,6 +21,7 @@ const CHAR_LIMITS: Record<PlatformId, number> = {
   linkedin: 3000,
   x: 280,
   threads: 500,
+  substack: 1000,
 };
 
 function charLimitFor(platformId: PlatformId): number {

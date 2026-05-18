@@ -1,6 +1,7 @@
 import { blueskyAdapter } from './bluesky';
 import { linkedinAdapter } from './linkedin';
 import { mastodonAdapter } from './mastodon';
+import { substackAdapter } from './substack';
 import { threadsAdapter } from './threads';
 import type { PlatformAdapter, PlatformId } from './types';
 import { xAdapter } from './x';
@@ -11,6 +12,7 @@ const adapters: PlatformAdapter[] = [
   linkedinAdapter,
   xAdapter,
   threadsAdapter,
+  substackAdapter,
 ];
 
 export const platformRegistry: Record<PlatformId, PlatformAdapter> = Object.fromEntries(

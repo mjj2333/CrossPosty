@@ -28,6 +28,7 @@ export default defineContentScript({
     '*://threads.net/*',
     '*://www.threads.com/*',
     '*://threads.com/*',
+    '*://*.substack.com/*',
   ],
   runAt: 'document_start',
   world: 'MAIN',
@@ -59,7 +60,9 @@ export default defineContentScript({
         // Threads: broad initial match while we figure out the exact
         // compose endpoint. The ISOLATED-side body parser filters by
         // text-field presence.
-        /(?:threads\.(?:net|com)|i\.instagram\.com)\/(?:api|graphql)/i.test(url)
+        /(?:threads\.(?:net|com)|i\.instagram\.com)\/(?:api|graphql)/i.test(url) ||
+        // Substack Notes — publication-scoped (drice233.substack.com etc.).
+        /substack\.com\/api\/v1\/comment\/feed\b/i.test(url)
       );
     }
 
