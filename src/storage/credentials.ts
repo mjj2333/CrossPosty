@@ -44,3 +44,14 @@ export async function deleteCredential(accountId: string): Promise<void> {
   const all = await loadCredentials();
   await saveCredentials(all.filter((c) => c.accountId !== accountId));
 }
+
+export async function updateCredential(cred: AccountCredentials): Promise<void> {
+  const all = await loadCredentials();
+  const i = all.findIndex((c) => c.accountId === cred.accountId);
+  if (i === -1) {
+    all.push(cred);
+  } else {
+    all[i] = cred;
+  }
+  await saveCredentials(all);
+}

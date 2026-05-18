@@ -1,4 +1,5 @@
 import { BskyAgent } from '@atproto/api';
+import { updateCredential } from '../storage/credentials';
 import type {
   AccountCredentials,
   MediaAttachment,
@@ -27,6 +28,41 @@ async function makeAgent(data: BlueskySessionData): Promise<BskyAgent> {
     active: true,
   });
   return agent;
+}
+
+// BskyAgent transparently refreshes the access JWT on 401 and updates
+// agent.session in place. If we don't write the rotated tokens back to
+// storage, every subsequent call still starts from the original (aging)
+// tokens — eventually those expire for real and the user gets
+// "token has been revoked" with no path back. Persist after every
+// successful network operation so the chain stays alive indefinitely.
+async function persistIfRotated(
+  credentials: AccountCredentials,
+  agent: BskyAgent,
+): Promise<void> {
+  const before = credentials.data as unknown as BlueskySessionData;
+  const after = agent.session;
+  if (!after) return;
+  if (
+    after.accessJwt === before.accessJwt &&
+    after.refreshJwt === before.refreshJwt
+  ) {
+    return;
+  }
+  const updated: AccountCredentials = {
+    ...credentials,
+    data: {
+      did: after.did,
+      handle: after.handle,
+      accessJwt: after.accessJwt,
+      refreshJwt: after.refreshJwt,
+    } as unknown as Record<string, unknown>,
+  };
+  try {
+    await updateCredential(updated);
+  } catch (err) {
+    console.warn('[CrossPosty] failed to persist rotated BSky tokens', err);
+  }
 }
 
 async function uploadImagesAndBuildEmbed(
@@ -99,6 +135,7 @@ export const blueskyAdapter: PlatformAdapter = {
       // agent.post types embed as a specific union; we've built a valid
       // app.bsky.embed.images shape but TS can't verify it through `unknown`.
       const res = await agent.post(record as Parameters<typeof agent.post>[0]);
+      await persistIfRotated(credentials, agent);
       const rkey = res.uri.split('/').pop() ?? '';
       return {
         success: true,
@@ -115,6 +152,7 @@ export const blueskyAdapter: PlatformAdapter = {
       const data = credentials.data as unknown as BlueskySessionData;
       const agent = await makeAgent(data);
       await agent.getProfile({ actor: data.handle });
+      await persistIfRotated(credentials, agent);
       return true;
     } catch {
       return false;
