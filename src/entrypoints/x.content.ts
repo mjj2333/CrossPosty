@@ -1,6 +1,7 @@
 import { mountComposerPanel } from '../composer/mount';
 import { xInterceptor } from '../interceptors/x';
 import { installOrphanRejectionSuppressor, isContextAlive } from '../lib/context';
+import { sniffImageMime } from '../lib/mime-sniff';
 import { storeSegment } from '../storage/media-cache';
 import { buildTemplate, saveXTemplate } from '../storage/x-template';
 
@@ -54,13 +55,25 @@ function installMediaSegmentSink(): void {
       }>
     ).detail;
     if (detail.sourcePlatform !== 'x') return;
-    void storeSegment({
-      sourcePlatform: 'x',
-      mediaId: detail.mediaId,
-      segmentIndex: detail.segmentIndex,
-      blob: detail.blob,
-      mimeType: detail.mimeType,
-    }).catch((err) => {
+    // X's FormData upload strips the original MIME — the captured blob comes
+    // through as application/octet-stream. Sniff the magic bytes to recover
+    // it so downstream filters (e.g. BlueSky adapter's image/* filter) work.
+    void (async () => {
+      const mimeType = await sniffImageMime(detail.blob);
+      if (mimeType !== detail.mimeType) {
+        console.log('[CrossPosty] sniffed X media MIME', {
+          original: detail.mimeType,
+          sniffed: mimeType,
+        });
+      }
+      await storeSegment({
+        sourcePlatform: 'x',
+        mediaId: detail.mediaId,
+        segmentIndex: detail.segmentIndex,
+        blob: detail.blob,
+        mimeType,
+      });
+    })().catch((err) => {
       console.warn('[CrossPosty] storeSegment failed', err);
     });
   });
