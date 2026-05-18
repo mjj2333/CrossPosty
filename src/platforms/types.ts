@@ -14,7 +14,7 @@ export type PostResult =
   | { success: true; url: string; remoteId: string }
   | { success: false; error: string; retryable: boolean };
 
-export type PlatformId = 'bluesky' | 'mastodon' | 'linkedin' | 'x';
+export type PlatformId = 'bluesky' | 'mastodon' | 'linkedin' | 'x' | 'threads';
 
 export type AccountCredentials = {
   platformId: PlatformId;

@@ -20,6 +20,7 @@ const CHAR_LIMITS: Record<PlatformId, number> = {
   mastodon: 500,
   linkedin: 3000,
   x: 280,
+  threads: 500,
 };
 
 function charLimitFor(platformId: PlatformId): number {

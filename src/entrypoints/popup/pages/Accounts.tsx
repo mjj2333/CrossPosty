@@ -74,6 +74,13 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
           </button>
           <button
             type="button"
+            onClick={() => onAdd('threads')}
+            className="bg-zinc-900 hover:bg-black text-white px-3 py-1 rounded text-sm"
+          >
+            Threads
+          </button>
+          <button
+            type="button"
             onClick={() => onAdd('linkedin')}
             className="bg-blue-700 hover:bg-blue-800 text-white px-3 py-1 rounded text-sm"
           >

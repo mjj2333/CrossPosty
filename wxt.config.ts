@@ -29,6 +29,9 @@ export default defineConfig({
       'https://bsky.social/*',
       'https://*.bsky.network/*',
       'https://www.linkedin.com/*',
+      'https://www.threads.net/*',
+      'https://threads.net/*',
+      'https://i.instagram.com/*',
     ],
     // Mastodon is federated — instance hostname not known until login time.
     // Popup calls chrome.permissions.request() with the typed instance before

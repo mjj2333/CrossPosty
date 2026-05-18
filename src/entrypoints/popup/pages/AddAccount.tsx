@@ -36,6 +36,8 @@ function fieldsFor(platformId: AddableId): Field[] {
       return [];
     case 'x':
       return [];
+    case 'threads':
+      return [];
   }
 }
 
@@ -47,6 +49,8 @@ function helperFor(platformId: AddableId): string | null {
       return "Make sure you're logged in at x.com, then click Connect. After connecting, post one tweet natively so CrossPosty can learn the current request shape - then cross-posts to X work.";
     case 'mastodon':
       return 'Enter your instance (e.g. mastodon.social). A login window will open - sign in once and authorize CrossPosty.';
+    case 'threads':
+      return "Make sure you're logged in at threads.net, then click Connect. After connecting, post one thread natively so CrossPosty can learn the current request shape - then cross-posts to Threads work.";
     case 'bluesky':
       return null;
   }

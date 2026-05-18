@@ -20,7 +20,13 @@
 import { debugLog } from '../lib/debug';
 
 export default defineContentScript({
-  matches: ['*://x.com/*', '*://twitter.com/*', '*://bsky.app/*'],
+  matches: [
+    '*://x.com/*',
+    '*://twitter.com/*',
+    '*://bsky.app/*',
+    '*://www.threads.net/*',
+    '*://threads.net/*',
+  ],
   runAt: 'document_start',
   world: 'MAIN',
   main() {
@@ -37,7 +43,11 @@ export default defineContentScript({
     function isInteresting(url: string): boolean {
       return (
         /(?:x\.com|twitter\.com)\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(url) ||
-        /\/xrpc\/com\.atproto\.repo\.(?:createRecord|applyWrites)/.test(url)
+        /\/xrpc\/com\.atproto\.repo\.(?:createRecord|applyWrites)/.test(url) ||
+        // Threads: broad initial match while we figure out the exact
+        // compose endpoint. The ISOLATED-side body parser filters by
+        // text-field presence.
+        /(?:threads\.net|i\.instagram\.com)\/(?:api|graphql)/i.test(url)
       );
     }
 
@@ -45,7 +55,8 @@ export default defineContentScript({
       return (
         /\/graphql\//.test(url) ||
         /CreateTweet|CreatePost|CreateNote/i.test(url) ||
-        /\/xrpc\/com\.atproto/.test(url)
+        /\/xrpc\/com\.atproto/.test(url) ||
+        /(?:threads\.net|i\.instagram\.com)\/(?:api|graphql)/i.test(url)
       );
     }
 
