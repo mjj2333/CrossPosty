@@ -318,42 +318,34 @@ export const blueskyAdapter: PlatformAdapter = {
       // the refresh token expires — but atproto refresh tokens are opaque
       // and we don't know that timestamp client-side. Surface the access
       // token expiry instead so the user can see the session is healthy.
-      console.log('[CrossPosty] BSky OAuth status check starting', {
-        pdsUrl: data.pdsUrl,
-        accessTokenExp: data.expiresAt,
-        accessTokenExpired: Math.floor(Date.now() / 1000) > data.expiresAt,
-      });
-      try {
-        let session: AtprotoOAuthSession = data;
-        const r = await pdsFetch(session, '/xrpc/com.atproto.server.getSession', {
-          method: 'GET',
-        });
-        session = r.session;
-        await persistIfOAuthRotated(credentials, data, session);
-        console.log('[CrossPosty] BSky OAuth status check done', {
-          status: r.response.status,
-        });
-        if (!r.response.ok) {
-          return {
-            ok: false,
-            severity: 'red',
-            message: `OAuth session rejected (HTTP ${r.response.status}).`,
-          };
-        }
-        return {
-          ok: true,
-          severity: 'green',
-          message: 'OAuth session healthy. Access token auto-refreshes.',
-          expiresAt: session.expiresAt,
-        };
-      } catch (err) {
-        console.warn('[CrossPosty] BSky OAuth status check threw', err);
+      // Local-only check. We previously tried a live getSession call here,
+      // but DPoP+nonce requests in the SW context hung indefinitely on the
+      // second fetch (the nonce-bearing retry). Status uses stored data:
+      // access token not expired => green, expired => yellow (refresh on
+      // next post will probably recover), no token => red. Cross-posting
+      // itself will surface a real error if the session is dead.
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (!data.accessToken || !data.refreshToken) {
         return {
           ok: false,
           severity: 'red',
-          message: `OAuth check failed: ${String(err).slice(0, 120)}`,
+          message: 'OAuth session is missing tokens. Reconnect this account.',
         };
       }
+      if (nowSec >= data.expiresAt) {
+        return {
+          ok: true,
+          severity: 'yellow',
+          message: 'Access token expired. Will auto-refresh on next post.',
+          expiresAt: data.expiresAt,
+        };
+      }
+      return {
+        ok: true,
+        severity: 'green',
+        message: 'OAuth session looks healthy. Access token auto-refreshes.',
+        expiresAt: data.expiresAt,
+      };
     }
     // App-password path: validate via @atproto/api and decode the refresh
     // JWT's exp claim. Refresh JWT lifetime is the practical "needs
