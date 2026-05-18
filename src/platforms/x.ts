@@ -151,6 +151,21 @@ async function readCookie(name: string): Promise<string | null> {
   return c?.value ?? null;
 }
 
+// X occasionally returns HTTP 200 with an `errors` array instead of a real
+// tweet result (content policy, duplicate, soft rate-limit, etc.). Pull out
+// the first human-readable message if one is present.
+function extractXErrorMessage(json: unknown): string | null {
+  if (typeof json !== 'object' || json === null) return null;
+  const root = json as { errors?: unknown };
+  if (!Array.isArray(root.errors) || root.errors.length === 0) return null;
+  const first = root.errors[0] as { message?: unknown; code?: unknown } | null;
+  if (!first || typeof first !== 'object') return null;
+  const message = typeof first.message === 'string' ? first.message : null;
+  const code = first.code;
+  if (message && code !== undefined) return `${message} (code ${String(code)})`;
+  return message ?? `errors[0] code=${String(code)}`;
+}
+
 // X's CreateTweet response shape has shifted over time and contains the
 // tweet ID at several possible paths. Walk known locations + a generic
 // deep-scan for any "rest_id"/"id_str" near a result/legacy object so we
@@ -273,13 +288,29 @@ export const xAdapter: PlatformAdapter = {
         };
       }
       const json = (await res.json()) as unknown;
+
+      // X sometimes returns 200 with an errors[] field instead of a real
+      // tweet (e.g. content policy, duplicate, soft block). Surface those.
+      const errorMessage = extractXErrorMessage(json);
+      if (errorMessage) {
+        console.warn('[CrossPosty] X CreateTweet 2xx but errors[] present', errorMessage);
+        return { success: false, error: `X rejected post: ${errorMessage}`, retryable: false };
+      }
+
       const restId = extractTweetId(json);
       if (!restId) {
-        // 2xx but we couldn't find an ID - could mean the response shape
-        // changed, or the post was rejected with a soft error. Log the
-        // top-level shape (not contents) so we can fix the extractor.
+        // 2xx, no errors[], but we still couldn't find an ID. Log a preview
+        // of the response so we can fix the extractor.
+        let preview = '';
+        try {
+          preview = JSON.stringify(json).slice(0, 500);
+        } catch {
+          preview = '(unserializable)';
+        }
         console.warn('[CrossPosty] X post 2xx but no rest_id extracted', {
-          topLevelKeys: typeof json === 'object' && json !== null ? Object.keys(json) : null,
+          topLevelKeys:
+            typeof json === 'object' && json !== null ? Object.keys(json) : null,
+          preview,
         });
       }
       const cred = _credentials.data as unknown as XSessionData;
