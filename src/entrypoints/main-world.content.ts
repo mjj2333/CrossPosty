@@ -285,14 +285,14 @@ export default defineContentScript({
 
       // FormData via init
       if (init?.body instanceof FormData) {
-        captureXAppendFromFormData(init.body, commandFromQuery);
+        captureXAppendFromFormData(init.body, url, commandFromQuery);
         return;
       }
       // FormData via Request body
       if (input instanceof Request) {
         try {
           const form = await input.clone().formData();
-          captureXAppendFromFormData(form, commandFromQuery);
+          captureXAppendFromFormData(form, url, commandFromQuery);
           return;
         } catch {
           // not form-data; fall through
@@ -318,15 +318,47 @@ export default defineContentScript({
       }
     }
 
-    function captureXAppendFromFormData(form: FormData, commandFromQuery: string | null): void {
-      const command = (form.get('command') as string | null) ?? commandFromQuery;
+    // X's chunked upload protocol puts command/media_id/segment_index in the
+    // URL query string when called via XHR, and in the FormData body when
+    // called via fetch (older clients). This function looks in both places —
+    // FormData first, URL query as fallback — so we capture either shape.
+    function captureXAppendFromFormData(
+      form: FormData,
+      url: string | null,
+      commandFromQueryOverride: string | null = null,
+    ): void {
+      const urlParams = (() => {
+        if (!url) return null;
+        try {
+          return new URL(url, location.origin).searchParams;
+        } catch {
+          return null;
+        }
+      })();
+
+      const fromForm = (k: string): string | null => {
+        const v = form.get(k);
+        return typeof v === 'string' ? v : null;
+      };
+      const fromQuery = (k: string): string | null => urlParams?.get(k) ?? null;
+
+      const command = fromForm('command') ?? commandFromQueryOverride ?? fromQuery('command');
       if (command !== 'APPEND') return;
-      const mediaId = form.get('media_id');
-      const segmentIndex = form.get('segment_index');
+      const mediaId = fromForm('media_id') ?? fromQuery('media_id');
+      if (!mediaId) {
+        console.warn('[CrossPosty] X APPEND with no media_id', { url });
+        return;
+      }
+      const segIdxStr = fromForm('segment_index') ?? fromQuery('segment_index') ?? '0';
+      const idx = Number(segIdxStr);
       const media = form.get('media');
-      if (typeof mediaId !== 'string') return;
-      if (!(media instanceof Blob)) return;
-      const idx = typeof segmentIndex === 'string' ? Number(segmentIndex) : 0;
+      if (!(media instanceof Blob)) {
+        console.warn('[CrossPosty] X APPEND but FormData.media is not a Blob', {
+          url,
+          mediaCtor: (media as { constructor?: { name?: string } } | null)?.constructor?.name,
+        });
+        return;
+      }
       dispatchMediaSegment({
         sourcePlatform: 'x',
         mediaId,
@@ -391,9 +423,11 @@ export default defineContentScript({
         if (X_MEDIA_UPLOAD_RE.test(url)) {
           if (body instanceof FormData) {
             console.log('[CrossPosty] X XHR media tap firing (FormData)', url);
-            captureXAppendFromFormData(body, null);
+            captureXAppendFromFormData(body, url);
           } else {
-            console.log('[CrossPosty] X XHR media tap: body not FormData', url, body?.constructor?.name);
+            // INIT and FINALIZE come through here with null body — that's fine,
+            // we don't need to capture them. APPEND should always be FormData.
+            console.log('[CrossPosty] X XHR upload command (non-FormData, ignored)', url);
           }
           return origSend.call(this, body);
         }
