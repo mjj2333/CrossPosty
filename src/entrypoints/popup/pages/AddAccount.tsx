@@ -6,9 +6,21 @@ type AddableId = PlatformId;
 
 type Field = { name: string; label: string; type: 'text' | 'password'; placeholder?: string };
 
-function fieldsFor(platformId: AddableId): Field[] {
+type BskyAuthMethod = 'oauth' | 'apppassword';
+
+function fieldsFor(platformId: AddableId, bskyMethod: BskyAuthMethod): Field[] {
   switch (platformId) {
     case 'bluesky':
+      if (bskyMethod === 'oauth') {
+        return [
+          {
+            name: 'handle',
+            label: 'Handle (e.g. you.bsky.social)',
+            type: 'text',
+            placeholder: 'you.bsky.social',
+          },
+        ];
+      }
       return [
         {
           name: 'identifier',
@@ -41,7 +53,7 @@ function fieldsFor(platformId: AddableId): Field[] {
   }
 }
 
-function helperFor(platformId: AddableId): string | null {
+function helperFor(platformId: AddableId, bskyMethod: BskyAuthMethod): string | null {
   switch (platformId) {
     case 'linkedin':
       return "Make sure you're logged in at linkedin.com in this browser, then click Connect. We read your session cookies directly - they stay on this device.";
@@ -52,7 +64,9 @@ function helperFor(platformId: AddableId): string | null {
     case 'threads':
       return "Make sure you're logged in at threads.net, then click Connect. After connecting, post one thread natively so CrossPosty can learn the current request shape - then cross-posts to Threads work.";
     case 'bluesky':
-      return null;
+      return bskyMethod === 'oauth'
+        ? 'Enter your handle. A login window will open — sign in once on bsky.app and authorize CrossPosty. No app password needed.'
+        : 'Generate an app password at BlueSky -> Settings -> App Passwords, then paste it here. Fully local, no browser redirect.';
   }
 }
 
@@ -66,9 +80,10 @@ export function AddAccountPage({
   const [params, setParams] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [bskyMethod, setBskyMethod] = useState<BskyAuthMethod>('oauth');
 
-  const fields = fieldsFor(platformId);
-  const helper = helperFor(platformId);
+  const fields = fieldsFor(platformId, bskyMethod);
+  const helper = helperFor(platformId, bskyMethod);
 
   async function submit() {
     setBusy(true);
@@ -96,7 +111,17 @@ export function AddAccountPage({
         }
       }
 
-      const req: Message = { type: 'AUTHENTICATE', payload: { platformId, params } };
+      // BlueSky OAuth needs the discriminator so the adapter routes to
+      // the OAuth path instead of the app-password path.
+      const finalParams =
+        platformId === 'bluesky' && bskyMethod === 'oauth'
+          ? { ...params, authType: 'oauth' }
+          : params;
+
+      const req: Message = {
+        type: 'AUTHENTICATE',
+        payload: { platformId, params: finalParams },
+      };
       const response = (await chrome.runtime.sendMessage(req)) as
         | AuthenticateResponse
         | null
@@ -125,6 +150,40 @@ export function AddAccountPage({
         {'<- back'}
       </button>
       <h2 className="font-medium capitalize">Add {platformId} account</h2>
+      {platformId === 'bluesky' && (
+        <div className="flex gap-1 text-xs">
+          <button
+            type="button"
+            onClick={() => {
+              setBskyMethod('oauth');
+              setParams({});
+              setError(null);
+            }}
+            className={`flex-1 px-2 py-1 rounded border ${
+              bskyMethod === 'oauth'
+                ? 'bg-emerald-50 border-emerald-600 text-emerald-700'
+                : 'border-gray-300 text-gray-600'
+            }`}
+          >
+            OAuth (recommended)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setBskyMethod('apppassword');
+              setParams({});
+              setError(null);
+            }}
+            className={`flex-1 px-2 py-1 rounded border ${
+              bskyMethod === 'apppassword'
+                ? 'bg-emerald-50 border-emerald-600 text-emerald-700'
+                : 'border-gray-300 text-gray-600'
+            }`}
+          >
+            App password
+          </button>
+        </div>
+      )}
       {helper && <p className="text-xs text-gray-600">{helper}</p>}
       {fields.map((f) => (
         <label key={f.name} className="block text-sm">
