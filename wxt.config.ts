@@ -11,6 +11,12 @@ export default defineConfig({
     name: 'CrossPosty',
     description:
       'Cross-post natively from X and BlueSky to BlueSky, Mastodon, and LinkedIn.',
+    // Deterministic extension ID so the chromiumapp.org redirect URI stays
+    // stable across reloads. Required for BlueSky atproto OAuth — the
+    // redirect URI is committed to client-metadata.json published on
+    // GitHub Pages, and the extension ID is derived from this key.
+    // Computed ID: mfhnecceaeljjgkaoijfdjhpedhhnjlg
+    key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqKb24rB0e6Scm3MEmtmH5Gml4ahsSvMtLMrtkQ/+slJMHGtirC9TZpbKuEehuiem6rd0XUTooGjB0j4QMr1SD16ItON/ciszZ6NJJmqQ4fTsImvjj+QAMj3+6DE5nS1ARMiPp+X5/PLZCyy1+kROagdcBQhaZTx3rMxCXxeUx4fc3kAvXg4/5Le4giYLnS3aQ1SO/wn2mpchVZOtKzDuduEsYCXAIRmR/+ORVI5tAvwEpzVNpMvasmjKIWOx9wkhC/doQvU6JrJ+Hm3fvujPSvPpX//1WTRVmv2k/6FnMCfEBm9WXCvO3G1E3rtdvKX27y3oLczs2dEjIRAKEEYp9QIDAQAB',
     permissions: [
       'storage',
       'cookies',
