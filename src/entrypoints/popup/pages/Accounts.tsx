@@ -46,6 +46,8 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
   const [statuses, setStatuses] = useState<Record<string, AccountStatusEntry['status']>>({});
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [reconnectingId, setReconnectingId] = useState<string | null>(null);
+  const [reconnectError, setReconnectError] = useState<{ id: string; msg: string } | null>(null);
   // Re-render every 30s so the relative "checked X ago" label stays
   // accurate while the popup is open. Popup is short-lived in practice,
   // but this matters when the user leaves it pinned.
@@ -89,6 +91,30 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
   async function remove(accountId: string) {
     await deleteCredential(accountId);
     await refresh();
+  }
+
+  async function reconnect(accountId: string) {
+    setReconnectingId(accountId);
+    setReconnectError(null);
+    try {
+      const resp = (await chrome.runtime.sendMessage({
+        type: 'RECONNECT_ACCOUNT',
+        payload: { accountId },
+      })) as { payload: { success: true } | { success: false; error: string } } | null;
+      if (!resp) {
+        setReconnectError({ id: accountId, msg: 'No response from background.' });
+        return;
+      }
+      if (resp.payload.success) {
+        await refresh();
+      } else {
+        setReconnectError({ id: accountId, msg: resp.payload.error });
+      }
+    } catch (err) {
+      setReconnectError({ id: accountId, msg: String(err) });
+    } finally {
+      setReconnectingId(null);
+    }
   }
 
   return (
@@ -142,14 +168,31 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
                         {a.displayName}
                       </span>
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => remove(a.accountId)}
-                      className="text-red-600 text-xs hover:underline"
-                    >
-                      remove
-                    </button>
+                    <span className="flex items-center gap-3">
+                      {status?.severity === 'red' && (
+                        <button
+                          type="button"
+                          onClick={() => reconnect(a.accountId)}
+                          disabled={reconnectingId === a.accountId}
+                          className="text-emerald-700 text-xs hover:underline disabled:opacity-50"
+                        >
+                          {reconnectingId === a.accountId ? 'reconnecting…' : 'reconnect'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => remove(a.accountId)}
+                        className="text-red-600 text-xs hover:underline"
+                      >
+                        remove
+                      </button>
+                    </span>
                   </div>
+                  {reconnectError?.id === a.accountId && (
+                    <p className="text-xs pl-4 text-red-600">
+                      Reconnect failed: {reconnectError.msg}
+                    </p>
+                  )}
                   {status && (status.message || status.expiresAt) && (
                     <p
                       className={`text-xs pl-4 ${

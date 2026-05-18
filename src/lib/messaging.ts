@@ -45,7 +45,12 @@ export type Message =
     }
   | { type: 'AUTHENTICATE_RESPONSE'; payload: AuthenticateResponse }
   | { type: 'GET_ACCOUNT_STATUSES'; payload: null }
-  | { type: 'GET_ACCOUNT_STATUSES_RESPONSE'; payload: AccountStatusEntry[] };
+  | { type: 'GET_ACCOUNT_STATUSES_RESPONSE'; payload: AccountStatusEntry[] }
+  | { type: 'RECONNECT_ACCOUNT'; payload: { accountId: string } }
+  | {
+      type: 'RECONNECT_ACCOUNT_RESPONSE';
+      payload: { success: true } | { success: false; error: string };
+    };
 
 export type MessageOf<T extends Message['type']> = Extract<Message, { type: T }>;
 

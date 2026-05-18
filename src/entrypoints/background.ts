@@ -9,8 +9,46 @@ import type {
 } from '../lib/messaging';
 import { onMessage } from '../lib/messaging';
 import { getAdapter } from '../platforms';
-import type { AccountStatus, PostContent, PostResult } from '../platforms/types';
-import { addCredential, loadCredentials } from '../storage/credentials';
+import type {
+  AccountCredentials,
+  AccountStatus,
+  PostContent,
+  PostResult,
+} from '../platforms/types';
+import { addCredential, loadCredentials, updateCredential } from '../storage/credentials';
+
+// Re-derives the params an adapter.authenticate() call would need to
+// refresh this credential's session, using whatever's already stored
+// on the existing record. Returning null means "this credential type
+// needs user input we don't have" — currently only BSky app-password
+// (the user has to supply a fresh app password).
+function buildReconnectParams(
+  cred: AccountCredentials,
+): Record<string, string> | null {
+  switch (cred.platformId) {
+    case 'x':
+    case 'threads':
+    case 'linkedin':
+      // Cookie-based — authenticate() reads from chrome.cookies, no
+      // params needed beyond the platform being recognised.
+      return {};
+    case 'mastodon': {
+      const data = cred.data as { instanceUrl?: string } | undefined;
+      if (!data?.instanceUrl) return null;
+      return { instanceUrl: data.instanceUrl };
+    }
+    case 'bluesky': {
+      const data = cred.data as { authType?: string; handle?: string } | undefined;
+      if (data?.authType === 'oauth' && data.handle) {
+        return { authType: 'oauth', handle: data.handle };
+      }
+      // App-password path: we don't store the password and shouldn't
+      // ask the user to reuse the old one anyway — return null so the
+      // popup nudges them to remove + re-add.
+      return null;
+    }
+  }
+}
 
 const X_UPLOAD_DNR_RULE_ID = 1;
 const THREADS_DNR_RULE_ID = 2;
@@ -111,6 +149,56 @@ export default defineBackground(() => {
         logger.warn('authenticate failed', { platformId, error: String(err) });
         const response: AuthenticateResponse = { success: false, error: String(err) };
         return response;
+      }
+    }
+
+    if (msg.type === 'RECONNECT_ACCOUNT') {
+      const { accountId } = msg.payload;
+      const all = await loadCredentials();
+      const existing = all.find((c) => c.accountId === accountId);
+      if (!existing) {
+        return {
+          type: 'RECONNECT_ACCOUNT_RESPONSE',
+          payload: { success: false, error: 'Account not found.' },
+        };
+      }
+      const params = buildReconnectParams(existing);
+      if (!params) {
+        return {
+          type: 'RECONNECT_ACCOUNT_RESPONSE',
+          payload: {
+            success: false,
+            error:
+              'This account needs a new app password — remove and re-add it from the Add account screen.',
+          },
+        };
+      }
+      try {
+        const adapter = getAdapter(existing.platformId);
+        const fresh = await adapter.authenticate(params);
+        // Preserve the stable accountId so anything that referenced this
+        // account (selections, history, etc.) keeps working. Take the
+        // newly-issued displayName since the user's handle / instance
+        // could have changed at the platform's end.
+        const updated: AccountCredentials = {
+          ...fresh,
+          accountId: existing.accountId,
+        };
+        await updateCredential(updated);
+        void runHealthCheckAndBadge();
+        return {
+          type: 'RECONNECT_ACCOUNT_RESPONSE',
+          payload: { success: true },
+        };
+      } catch (err) {
+        logger.warn('reconnect failed', {
+          platformId: existing.platformId,
+          error: String(err),
+        });
+        return {
+          type: 'RECONNECT_ACCOUNT_RESPONSE',
+          payload: { success: false, error: String(err) },
+        };
       }
     }
 
