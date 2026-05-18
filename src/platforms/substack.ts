@@ -154,12 +154,23 @@ async function blobToDataUrl(blob: Blob, mimeType: string): Promise<string> {
 }
 
 function permalinkFromResponse(templateUrl: string, json: CommentCreateResponse): string {
-  // The user's publication base (everything up to /api/...).
-  const apiIndex = templateUrl.indexOf('/api/');
-  const base =
-    apiIndex >= 0 ? templateUrl.slice(0, apiIndex) : 'https://substack.com';
-  if (json.id) return `${base}/notes/note/c-${json.id}`;
-  return `${base}/notes`;
+  // Substack notes live under the global substack.com namespace at
+  //   https://substack.com/@<handle>/note/c-<id>
+  // not on the publication subdomain (the publication subdomain serves a
+  // 404 for /notes/note/...). Extract the handle from the captured
+  // template's subdomain — drice233.substack.com -> drice233.
+  const fallback = 'https://substack.com/notes';
+  let handle: string | null = null;
+  try {
+    const host = new URL(templateUrl).host;
+    const m = /^([^.]+)\.substack\.com$/.exec(host);
+    if (m) handle = m[1] ?? null;
+  } catch {
+    // fall through to fallback
+  }
+  if (!json.id) return fallback;
+  if (handle) return `https://substack.com/@${handle}/note/c-${json.id}`;
+  return `${fallback}#c-${json.id}`;
 }
 
 export const substackAdapter: PlatformAdapter = {
@@ -268,11 +279,18 @@ export const substackAdapter: PlatformAdapter = {
         };
       }
       let json: CommentCreateResponse = {};
+      let rawBody = '';
       try {
-        json = (await res.json()) as CommentCreateResponse;
+        rawBody = await res.text();
+        json = JSON.parse(rawBody) as CommentCreateResponse;
       } catch {
         // Body wasn't JSON — still treat the 2xx as success.
       }
+      console.log('[CrossPosty] Substack comment/feed response', {
+        bodyChars: rawBody.length,
+        preview: rawBody.slice(0, 400),
+        attachmentIdsUsed: attachmentIds,
+      });
       return {
         success: true,
         url: permalinkFromResponse(template.url, json),
