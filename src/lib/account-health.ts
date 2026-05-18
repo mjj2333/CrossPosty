@@ -84,9 +84,11 @@ export async function updateBadge(summary: HealthSummary): Promise<void> {
 }
 
 export async function runHealthCheckAndBadge(): Promise<HealthSummary> {
+  logger.info('health check running');
   try {
     const summary = await computeHealthSummary();
     await updateBadge(summary);
+    logger.info('health check done', summary);
     return summary;
   } catch (err) {
     logger.warn('runHealthCheckAndBadge failed', { error: String(err) });

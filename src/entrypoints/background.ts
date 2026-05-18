@@ -115,6 +115,7 @@ export default defineBackground(() => {
     }
 
     if (msg.type === 'GET_ACCOUNT_STATUSES') {
+      logger.info('GET_ACCOUNT_STATUSES received');
       const creds = await loadCredentials();
       // Each adapter gets its own timeout. Without this, a single hung
       // network call (e.g. an unreachable PDS for a BSky OAuth account)
@@ -164,6 +165,10 @@ export default defineBackground(() => {
         { red: 0, yellow: 0, green: 0 },
       );
       void updateBadge(summary);
+      logger.info('GET_ACCOUNT_STATUSES completed', {
+        count: entries.length,
+        ...summary,
+      });
       return { type: 'GET_ACCOUNT_STATUSES_RESPONSE', payload: entries };
     }
 
