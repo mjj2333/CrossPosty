@@ -18,7 +18,23 @@ export function isContextAlive(): boolean {
 
 export function isContextInvalidatedError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  return /context invalidated|Extension context/i.test(err.message);
+  // Direct error: Chrome's explicit "Extension context invalidated." message.
+  if (/context invalidated|Extension context/i.test(err.message)) return true;
+  // Indirect: after invalidation, chrome.runtime / chrome.storage / chrome.cookies
+  // become `undefined`, so dereferencing them throws TypeError with messages like
+  // "Cannot read properties of undefined (reading 'sendMessage')" or
+  // "Cannot read properties of undefined (reading 'local')". Treat those the same
+  // — they all mean the same thing in practice.
+  if (err instanceof TypeError && /Cannot read propert(ies|y)/i.test(err.message)) {
+    if (
+      /(sendMessage|onMessage|runtime|storage|cookies|tabs|identity|alarms|offscreen|scripting|permissions|local|sync|managed)/i.test(
+        err.message,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Installs a window-level handler that swallows "Extension context invalidated"
