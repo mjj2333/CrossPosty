@@ -30,7 +30,7 @@ function stripVolatile(headers: Record<string, string>): Record<string, string> 
   return out;
 }
 
-function mutateTweetText(bodyJson: unknown, text: string): unknown {
+function mutateTweetText(bodyJson: unknown, text: string, newMediaIds: string[]): unknown {
   if (typeof bodyJson !== 'object' || bodyJson === null) return bodyJson;
   const root = bodyJson as Record<string, unknown>;
   const variables = root.variables;
@@ -40,12 +40,96 @@ function mutateTweetText(bodyJson: unknown, text: string): unknown {
     // Posting fresh content — drop any reply/quote linkage from the template.
     delete v.reply;
     delete v.quote_tweet_id;
-    // Drop captured media references; Phase 1 X-as-destination is text-only.
-    if (typeof v.media === 'object' && v.media !== null) {
+    // Replace captured media references with the fresh IDs we just uploaded
+    // (or clear entirely if no media).
+    if (newMediaIds.length > 0) {
+      const mediaContainer =
+        typeof v.media === 'object' && v.media !== null
+          ? (v.media as Record<string, unknown>)
+          : {};
+      mediaContainer.media_entities = newMediaIds.map((id) => ({
+        media_id: id,
+        tagged_users: [],
+      }));
+      mediaContainer.possibly_sensitive = false;
+      v.media = mediaContainer;
+    } else if (typeof v.media === 'object' && v.media !== null) {
       (v.media as Record<string, unknown>).media_entities = [];
     }
   }
   return root;
+}
+
+// Uploads one media blob to X using their INIT/APPEND/FINALIZE chunked
+// protocol. Returns the new media_id_string we can reference in CreateTweet.
+async function uploadXMedia(
+  blob: Blob,
+  mimeType: string,
+  templateHeaders: Record<string, string>,
+  ct0: string,
+): Promise<string> {
+  const baseUrl = 'https://upload.twitter.com/i/media/upload.json';
+  const authHeader =
+    templateHeaders.authorization ?? templateHeaders.Authorization ?? '';
+  const commonHeaders: Record<string, string> = {
+    authorization: authHeader,
+    'x-csrf-token': ct0,
+    'x-twitter-active-user': 'yes',
+    'x-twitter-auth-type': 'OAuth2Session',
+  };
+
+  // INIT
+  const initParams = new URLSearchParams({
+    command: 'INIT',
+    total_bytes: String(blob.size),
+    media_type: mimeType,
+    media_category: mimeType.startsWith('video/') ? 'tweet_video' : 'tweet_image',
+  });
+  const initRes = await fetch(`${baseUrl}?${initParams.toString()}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: commonHeaders,
+  });
+  if (!initRes.ok) {
+    throw new Error(`X media INIT failed (HTTP ${initRes.status})`);
+  }
+  const initJson = (await initRes.json()) as { media_id_string?: string };
+  if (!initJson.media_id_string) {
+    throw new Error('X media INIT returned no media_id_string');
+  }
+  const mediaId = initJson.media_id_string;
+
+  // APPEND — single segment for v1 (sufficient for typical images).
+  const appendForm = new FormData();
+  appendForm.append('command', 'APPEND');
+  appendForm.append('media_id', mediaId);
+  appendForm.append('segment_index', '0');
+  appendForm.append('media', blob);
+  const appendRes = await fetch(baseUrl, {
+    method: 'POST',
+    credentials: 'include',
+    // Don't set content-type — fetch fills in the multipart boundary.
+    headers: commonHeaders,
+    body: appendForm,
+  });
+  if (!appendRes.ok) {
+    throw new Error(`X media APPEND failed (HTTP ${appendRes.status})`);
+  }
+
+  // FINALIZE
+  const finalizeParams = new URLSearchParams({
+    command: 'FINALIZE',
+    media_id: mediaId,
+  });
+  const finalizeRes = await fetch(`${baseUrl}?${finalizeParams.toString()}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: commonHeaders,
+  });
+  if (!finalizeRes.ok) {
+    throw new Error(`X media FINALIZE failed (HTTP ${finalizeRes.status})`);
+  }
+  return mediaId;
 }
 
 async function readCookie(name: string): Promise<string | null> {
@@ -135,7 +219,25 @@ export const xAdapter: PlatformAdapter = {
       };
     }
 
-    const body = mutateTweetText(template.bodyJson, content.text);
+    // Upload any attached images to X first. X allows max 4 per tweet.
+    const newMediaIds: string[] = [];
+    const imageMedia = (content.media ?? []).filter((m) =>
+      m.mimeType.startsWith('image/'),
+    );
+    try {
+      for (const m of imageMedia.slice(0, 4)) {
+        const id = await uploadXMedia(m.blob, m.mimeType, template.headers, ct0);
+        newMediaIds.push(id);
+      }
+    } catch (err) {
+      return {
+        success: false,
+        error: `Media upload to X failed: ${String(err)}`,
+        retryable: true,
+      };
+    }
+
+    const body = mutateTweetText(template.bodyJson, content.text, newMediaIds);
     const headers: Record<string, string> = {
       ...stripVolatile(template.headers),
       'content-type': 'application/json',

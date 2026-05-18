@@ -5,6 +5,7 @@ const loginMock = vi.fn();
 const postMock = vi.fn();
 const getProfileMock = vi.fn();
 const resumeSessionMock = vi.fn();
+const uploadBlobMock = vi.fn();
 
 vi.mock('@atproto/api', () => {
   class BskyAgent {
@@ -12,6 +13,7 @@ vi.mock('@atproto/api', () => {
     post = postMock;
     getProfile = getProfileMock;
     resumeSession = resumeSessionMock;
+    uploadBlob = uploadBlobMock;
     session = {
       did: 'did:plc:test',
       handle: 'test.bsky.social',
@@ -27,6 +29,7 @@ beforeEach(() => {
   postMock.mockReset();
   getProfileMock.mockReset();
   resumeSessionMock.mockReset();
+  uploadBlobMock.mockReset();
   resumeSessionMock.mockResolvedValue(undefined);
 });
 
@@ -75,6 +78,33 @@ describe('blueskyAdapter', () => {
       expect(result.url).toBe('https://bsky.app/profile/test.bsky.social/post/abc123');
       expect(result.remoteId).toBe('at://did:plc:test/app.bsky.feed.post/abc123');
     }
+  });
+
+  it('uploads attached images and includes them in the post embed', async () => {
+    postMock.mockResolvedValue({
+      uri: 'at://did:plc:test/app.bsky.feed.post/withimg',
+      cid: 'cid2',
+    });
+    uploadBlobMock.mockResolvedValue({
+      data: { blob: { $type: 'blob', ref: { $link: 'bafkreiUPLOAD' }, mimeType: 'image/jpeg', size: 4 } },
+    });
+    const result = await blueskyAdapter.post(
+      {
+        text: 'hello with image',
+        media: [{ blob: new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/jpeg' }), mimeType: 'image/jpeg' }],
+      },
+      {
+        platformId: 'bluesky',
+        accountId: 'a',
+        displayName: '@test.bsky.social',
+        data: { did: 'did:plc:test', handle: 'test.bsky.social', accessJwt: 'a', refreshJwt: 'r' },
+      },
+    );
+    expect(result.success).toBe(true);
+    expect(uploadBlobMock).toHaveBeenCalledOnce();
+    const postArgs = postMock.mock.calls[0]?.[0] as { embed?: { $type: string; images: unknown[] } };
+    expect(postArgs.embed?.$type).toBe('app.bsky.embed.images');
+    expect(postArgs.embed?.images).toHaveLength(1);
   });
 
   it('returns retryable failure on network error', async () => {

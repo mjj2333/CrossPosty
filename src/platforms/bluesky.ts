@@ -1,10 +1,14 @@
 import { BskyAgent } from '@atproto/api';
 import type {
   AccountCredentials,
+  MediaAttachment,
   PlatformAdapter,
   PostContent,
   PostResult,
 } from './types';
+
+// BlueSky enforces a max of 4 images per post and ~1MB per image.
+const MAX_IMAGES = 4;
 
 type BlueskySessionData = {
   did: string;
@@ -23,6 +27,28 @@ async function makeAgent(data: BlueskySessionData): Promise<BskyAgent> {
     active: true,
   });
   return agent;
+}
+
+async function uploadImagesAndBuildEmbed(
+  agent: BskyAgent,
+  images: MediaAttachment[],
+): Promise<unknown | null> {
+  if (images.length === 0) return null;
+  const limited = images.slice(0, MAX_IMAGES);
+  const uploaded = await Promise.all(
+    limited.map(async (m) => {
+      const bytes = new Uint8Array(await m.blob.arrayBuffer());
+      const upload = await agent.uploadBlob(bytes, { encoding: m.mimeType });
+      return {
+        alt: m.alt ?? '',
+        image: upload.data.blob,
+      };
+    }),
+  );
+  return {
+    $type: 'app.bsky.embed.images',
+    images: uploaded,
+  };
 }
 
 export const blueskyAdapter: PlatformAdapter = {
@@ -60,7 +86,19 @@ export const blueskyAdapter: PlatformAdapter = {
     try {
       const data = credentials.data as unknown as BlueskySessionData;
       const agent = await makeAgent(data);
-      const res = await agent.post({ text: content.text });
+
+      // Upload any attached media as blobs and build an embed.
+      const imageMedia = (content.media ?? []).filter((m) =>
+        m.mimeType.startsWith('image/'),
+      );
+      const embed = await uploadImagesAndBuildEmbed(agent, imageMedia);
+
+      const record: { text: string; embed?: unknown } = { text: content.text };
+      if (embed) record.embed = embed;
+
+      // agent.post types embed as a specific union; we've built a valid
+      // app.bsky.embed.images shape but TS can't verify it through `unknown`.
+      const res = await agent.post(record as Parameters<typeof agent.post>[0]);
       const rkey = res.uri.split('/').pop() ?? '';
       return {
         success: true,

@@ -85,6 +85,14 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+.crossposty-media-indicator {
+  font-size: 11px;
+  color: #555;
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: #f3f4f6;
+  border-radius: 4px;
+}
 .crossposty-result { font-size: 12px; margin-top: 4px; }
 .crossposty-result.success { color: #059669; }
 .crossposty-result.fail { color: #dc2626; }

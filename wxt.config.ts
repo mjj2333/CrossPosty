@@ -11,8 +11,11 @@ export default defineConfig({
     host_permissions: [
       'https://x.com/*',
       'https://twitter.com/*',
+      'https://upload.twitter.com/*',
+      'https://upload.x.com/*',
       'https://bsky.app/*',
       'https://bsky.social/*',
+      'https://*.bsky.network/*',
       'https://www.linkedin.com/*',
     ],
     // Mastodon is federated — instance hostname not known until login time.

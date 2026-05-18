@@ -4,10 +4,18 @@
 // executes synchronously before any page scripts — otherwise the page bundle
 // can capture references to fetch/XHR into its closure before we patch them.
 //
-// We hook both because different X surfaces use different transports. Some
-// pages route POST /graphql/.../CreateTweet through fetch, others through
-// XHR. We dispatch a `crossposty:intercept` CustomEvent for either source so
-// the ISOLATED-world listener can react uniformly.
+// We hook two classes of requests:
+//
+//   1. *Compose* requests (CreateTweet on X, applyWrites/createRecord on
+//      BlueSky). We dispatch `crossposty:intercept` so the ISOLATED-world
+//      content script can mount the cross-post panel.
+//
+//   2. *Media upload* requests (upload.twitter.com APPEND on X,
+//      xrpc/uploadBlob on BlueSky). We capture binary bodies + the media
+//      identifier and dispatch `crossposty:media-segment`. The ISOLATED
+//      content script stashes them in IndexedDB so that when a compose
+//      request fires referencing those IDs, we can resurrect the bytes and
+//      forward them to other destinations.
 
 export default defineContentScript({
   matches: ['*://x.com/*', '*://twitter.com/*', '*://bsky.app/*'],
@@ -22,22 +30,15 @@ export default defineContentScript({
     patchFetch();
     patchXHR();
 
+    // ---- URL matchers ----------------------------------------------------
+
     function isInteresting(url: string): boolean {
       return (
         /(?:x\.com|twitter\.com)\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(url) ||
-        // BlueSky is federated — each user's repo lives on a PDS host that
-        // can be bsky.social, *.bsky.network, or a self-hosted domain. Match
-        // the AT Protocol RPC path regardless of host. bsky.app itself uses
-        // applyWrites (batch atomic write) for composing; standalone clients
-        // tend to use createRecord. Handle both. The body-shape check in
-        // src/interceptors/bsky.ts filters out non-post records (likes,
-        // follows, profile edits) that also flow through these endpoints.
         /\/xrpc\/com\.atproto\.repo\.(?:createRecord|applyWrites)/.test(url)
       );
     }
 
-    // Loose match for any compose-shaped URL — used as a debug log so we can
-    // see what's actually happening even if endpoint names shift.
     function isGraphqlish(url: string): boolean {
       return (
         /\/graphql\//.test(url) ||
@@ -45,6 +46,14 @@ export default defineContentScript({
         /\/xrpc\/com\.atproto/.test(url)
       );
     }
+
+    // Pure read-only CDN hosts — bypass entirely.
+    const CDN_BYPASS_RE = /(?:^https?:\/\/)?(?:pbs\.twimg\.com|video\.twimg\.com|ton\.x\.com)\//;
+    // Media upload endpoints — we tap these for capture.
+    const X_MEDIA_UPLOAD_RE = /(?:upload\.(?:twitter|x)\.com)\/i\/media\/upload\.json/;
+    const BSKY_UPLOAD_BLOB_RE = /\/xrpc\/com\.atproto\.repo\.uploadBlob/;
+
+    // ---- Compose intercept dispatch -------------------------------------
 
     function dispatchIntercept(url: string, body: string, headers: Record<string, string>): void {
       console.log('[CrossPosty] dispatching crossposty:intercept', {
@@ -58,8 +67,28 @@ export default defineContentScript({
       );
     }
 
-    const UPLOAD_HOST_RE =
-      /(?:^https?:\/\/)?(?:upload\.(?:twitter|x)\.com|pbs\.twimg\.com|video\.twimg\.com|ton\.x\.com)\//;
+    // ---- Media capture dispatch -----------------------------------------
+
+    type MediaSegmentDetail = {
+      sourcePlatform: 'x' | 'bluesky';
+      mediaId: string;
+      segmentIndex: number;
+      blob: Blob;
+      mimeType: string;
+    };
+
+    function dispatchMediaSegment(d: MediaSegmentDetail): void {
+      console.log('[CrossPosty] media segment captured', {
+        platform: d.sourcePlatform,
+        mediaId: d.mediaId,
+        segmentIndex: d.segmentIndex,
+        bytes: d.blob.size,
+        mime: d.mimeType,
+      });
+      window.dispatchEvent(new CustomEvent('crossposty:media-segment', { detail: d }));
+    }
+
+    // ---- fetch patch ----------------------------------------------------
 
     function patchFetch() {
       const origFetch = window.fetch.bind(window);
@@ -71,10 +100,22 @@ export default defineContentScript({
               : input instanceof URL
                 ? input.toString()
                 : (input as Request).url;
-          // Skip *all* observation on upload hosts — never touch binary bodies.
-          if (UPLOAD_HOST_RE.test(url)) {
+
+          if (CDN_BYPASS_RE.test(url)) return origFetch(input, init);
+
+          // Media uploads: BlueSky needs response tap to learn cid; X has
+          // media_id in the request body so we can capture without awaiting
+          // the response.
+          if (BSKY_UPLOAD_BLOB_RE.test(url)) {
+            return await tapBskyUpload(url, input, init, origFetch);
+          }
+          if (X_MEDIA_UPLOAD_RE.test(url)) {
+            tapXMediaUpload(input, init).catch((err) =>
+              console.warn('[CrossPosty] X media tap failed', err),
+            );
             return origFetch(input, init);
           }
+
           if (isGraphqlish(url)) {
             console.log('[CrossPosty] fetch graphql-ish URL', url);
           }
@@ -101,9 +142,6 @@ export default defineContentScript({
       input: RequestInfo | URL,
       init?: RequestInit,
     ): Promise<string> {
-      // Prefer init.body (the most common call shape). If absent, fall back
-      // to reading the Request's body via clone (single-use stream, so we
-      // never consume the original).
       const body = init?.body;
       if (body != null) {
         if (typeof body === 'string') return body;
@@ -134,6 +172,154 @@ export default defineContentScript({
       return {};
     }
 
+    async function readBodyAsBlob(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Blob | null> {
+      const body = init?.body;
+      if (body instanceof Blob) return body;
+      if (body instanceof ArrayBuffer) return new Blob([body]);
+      if (ArrayBuffer.isView(body)) return new Blob([body as BlobPart]);
+      if (input instanceof Request) {
+        try {
+          return await input.clone().blob();
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    // ---- BlueSky media capture ------------------------------------------
+
+    async function tapBskyUpload(
+      _url: string,
+      input: RequestInfo | URL,
+      init: RequestInit | undefined,
+      origFetch: typeof fetch,
+    ): Promise<Response> {
+      // Read the request body BEFORE firing the fetch — the body is the
+      // raw image bytes that we want to keep a copy of.
+      const reqBlob = await readBodyAsBlob(input, init);
+      const response = await origFetch(input, init);
+
+      if (reqBlob && response.ok) {
+        // Tap response asynchronously to learn the cid. Cloning before
+        // .json() keeps the original response stream intact for the caller.
+        response
+          .clone()
+          .json()
+          .then((json: unknown) => {
+            const cid = extractBskyCid(json);
+            if (cid) {
+              dispatchMediaSegment({
+                sourcePlatform: 'bluesky',
+                mediaId: cid,
+                segmentIndex: 0,
+                blob: reqBlob,
+                mimeType: reqBlob.type || 'application/octet-stream',
+              });
+            } else {
+              console.warn(
+                '[CrossPosty] bsky uploadBlob 2xx but no cid in response',
+                json,
+              );
+            }
+          })
+          .catch((err) => {
+            console.warn('[CrossPosty] bsky uploadBlob response read failed', err);
+          });
+      }
+
+      return response;
+    }
+
+    function extractBskyCid(json: unknown): string | null {
+      if (typeof json !== 'object' || json === null) return null;
+      const root = json as { blob?: { ref?: { $link?: unknown } } };
+      const cid = root.blob?.ref?.$link;
+      return typeof cid === 'string' ? cid : null;
+    }
+
+    // ---- X media capture ------------------------------------------------
+
+    async function tapXMediaUpload(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<void> {
+      // The X media-upload endpoint serves INIT, APPEND, and FINALIZE.
+      // We only care about APPEND, which carries the binary segment.
+      // Both query-string and FormData call-shapes are observed in the wild.
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url;
+
+      const commandFromQuery = (() => {
+        try {
+          return new URL(url, location.origin).searchParams.get('command');
+        } catch {
+          return null;
+        }
+      })();
+
+      // FormData via init
+      if (init?.body instanceof FormData) {
+        captureXAppendFromFormData(init.body, commandFromQuery);
+        return;
+      }
+      // FormData via Request body
+      if (input instanceof Request) {
+        try {
+          const form = await input.clone().formData();
+          captureXAppendFromFormData(form, commandFromQuery);
+          return;
+        } catch {
+          // not form-data; fall through
+        }
+      }
+      // Some X paths send the binary as the raw body with the command in the
+      // query string. Capture those too.
+      if (commandFromQuery === 'APPEND') {
+        const reqBlob = await readBodyAsBlob(input, init);
+        if (!reqBlob || reqBlob.size === 0) return;
+        const mediaId = new URL(url, location.origin).searchParams.get('media_id');
+        const segmentIndex = Number(
+          new URL(url, location.origin).searchParams.get('segment_index') ?? '0',
+        );
+        if (!mediaId) return;
+        dispatchMediaSegment({
+          sourcePlatform: 'x',
+          mediaId,
+          segmentIndex: Number.isFinite(segmentIndex) ? segmentIndex : 0,
+          blob: reqBlob,
+          mimeType: reqBlob.type || 'application/octet-stream',
+        });
+      }
+    }
+
+    function captureXAppendFromFormData(form: FormData, commandFromQuery: string | null): void {
+      const command = (form.get('command') as string | null) ?? commandFromQuery;
+      if (command !== 'APPEND') return;
+      const mediaId = form.get('media_id');
+      const segmentIndex = form.get('segment_index');
+      const media = form.get('media');
+      if (typeof mediaId !== 'string') return;
+      if (!(media instanceof Blob)) return;
+      const idx = typeof segmentIndex === 'string' ? Number(segmentIndex) : 0;
+      dispatchMediaSegment({
+        sourcePlatform: 'x',
+        mediaId,
+        segmentIndex: Number.isFinite(idx) ? idx : 0,
+        blob: media,
+        mimeType: media.type || 'application/octet-stream',
+      });
+    }
+
+    // ---- XHR patch ------------------------------------------------------
+
     function patchXHR() {
       const XHR = XMLHttpRequest.prototype;
       const origOpen = XHR.open;
@@ -146,10 +332,6 @@ export default defineContentScript({
         __crossposty_headers?: Record<string, string>;
       };
 
-      // Use rest args so we pass *exactly* what the caller passed — never
-      // change the arity of the call to origOpen. Calling open(...) with 5
-      // explicit args when X only passed 2 can subtly change X's request
-      // handling and (per user report) appears to break media upload.
       XHR.open = function (this: XMLHttpRequest, ...args: unknown[]): void {
         const t = this as Tagged;
         const method = args[0];
@@ -172,8 +354,16 @@ export default defineContentScript({
         const t = this as Tagged;
         const url = t.__crossposty_url ?? '';
 
-        // Fast-path: skip *all* observation for upload hosts.
-        if (UPLOAD_HOST_RE.test(url)) {
+        if (CDN_BYPASS_RE.test(url)) return origSend.call(this, body);
+
+        // X via XHR: capture FormData append synchronously, fire-and-forget.
+        if (X_MEDIA_UPLOAD_RE.test(url) && body instanceof FormData) {
+          captureXAppendFromFormData(body, null);
+          return origSend.call(this, body);
+        }
+        // BlueSky upload via XHR is rare and we can't tap the response from
+        // inside send(); skip for v1 (the fetch path handles bsky.app).
+        if (BSKY_UPLOAD_BLOB_RE.test(url)) {
           return origSend.call(this, body);
         }
 
@@ -185,7 +375,6 @@ export default defineContentScript({
             let bodyText = '';
             if (typeof body === 'string') bodyText = body;
             else if (body instanceof Blob) {
-              // Async — fire off without blocking send
               body.text().then((txt) =>
                 dispatchIntercept(url, txt, t.__crossposty_headers ?? {}),
               );
@@ -198,7 +387,7 @@ export default defineContentScript({
             }
           }
         } catch {
-          // never block original send on observability failure
+          // never block original send
         }
         return origSend.call(this, body);
       };

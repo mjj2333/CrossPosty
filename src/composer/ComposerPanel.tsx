@@ -60,12 +60,19 @@ export function ComposerPanel({
     setBusy(true);
     const active = variants.filter((v) => v.enabled);
 
-    // Each variant has its own text, so we send one request per variant.
+    // Media is shared across variants (same images); per-platform edits in
+    // future. We pass intercepted.media on every request — adapters decide
+    // whether/how to upload (e.g. LinkedIn currently ignores media in v1).
+    const media = intercepted.media;
+
     const responses = await Promise.all(
       active.map(async (v) => {
         const req: Message = {
           type: 'CROSSPOST_REQUEST',
-          payload: { content: { text: v.text }, accountIds: [v.account.accountId] },
+          payload: {
+            content: { text: v.text, media },
+            accountIds: [v.account.accountId],
+          },
         };
         const res = (await chrome.runtime.sendMessage(req)) as CrossPostResultEntry[];
         return res[0];
@@ -111,6 +118,7 @@ export function ComposerPanel({
               text={v.text}
               charLimit={charLimitFor(v.account.platformId)}
               enabled={v.enabled}
+              mediaCount={intercepted.media.length}
               onTextChange={(text) => update(i, { text })}
               onToggle={(enabled) => update(i, { enabled })}
               result={v.result}
