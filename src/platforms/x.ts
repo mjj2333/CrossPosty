@@ -68,7 +68,10 @@ async function uploadXMedia(
   templateHeaders: Record<string, string>,
   ct0: string,
 ): Promise<string> {
-  const baseUrl = 'https://upload.twitter.com/i/media/upload.json';
+  // X's web client uses upload.x.com (the legacy upload.twitter.com host is
+  // getting gated for many accounts and returns 403). We match the host the
+  // user's own browser uses to match the same anti-bot signals.
+  const baseUrl = 'https://upload.x.com/i/media/upload.json';
   const authHeader =
     templateHeaders.authorization ?? templateHeaders.Authorization ?? '';
   const commonHeaders: Record<string, string> = {
@@ -76,7 +79,18 @@ async function uploadXMedia(
     'x-csrf-token': ct0,
     'x-twitter-active-user': 'yes',
     'x-twitter-auth-type': 'OAuth2Session',
+    'x-twitter-client-language': 'en',
   };
+
+  async function describeFailure(res: Response, step: string): Promise<string> {
+    let bodyPreview = '';
+    try {
+      bodyPreview = (await res.text()).slice(0, 200);
+    } catch {
+      bodyPreview = '(could not read body)';
+    }
+    return `X media ${step} failed (HTTP ${res.status}): ${bodyPreview}`;
+  }
 
   // INIT
   const initParams = new URLSearchParams({
@@ -91,7 +105,7 @@ async function uploadXMedia(
     headers: commonHeaders,
   });
   if (!initRes.ok) {
-    throw new Error(`X media INIT failed (HTTP ${initRes.status})`);
+    throw new Error(await describeFailure(initRes, 'INIT'));
   }
   const initJson = (await initRes.json()) as { media_id_string?: string };
   if (!initJson.media_id_string) {
@@ -113,7 +127,7 @@ async function uploadXMedia(
     body: appendForm,
   });
   if (!appendRes.ok) {
-    throw new Error(`X media APPEND failed (HTTP ${appendRes.status})`);
+    throw new Error(await describeFailure(appendRes, 'APPEND'));
   }
 
   // FINALIZE
@@ -127,7 +141,7 @@ async function uploadXMedia(
     headers: commonHeaders,
   });
   if (!finalizeRes.ok) {
-    throw new Error(`X media FINALIZE failed (HTTP ${finalizeRes.status})`);
+    throw new Error(await describeFailure(finalizeRes, 'FINALIZE'));
   }
   return mediaId;
 }
