@@ -30,10 +30,30 @@ function formatExpiry(epochSeconds: number): string {
   return `expires ${new Date(epochSeconds * 1000).toLocaleDateString()}`;
 }
 
+function formatAge(epochMs: number, nowMs: number): string {
+  const ms = nowMs - epochMs;
+  if (ms < 10_000) return 'just now';
+  const minutes = ms / 60_000;
+  const hours = ms / 3_600_000;
+  if (minutes < 1) return `${Math.floor(ms / 1000)}s ago`;
+  if (minutes < 60) return `${Math.floor(minutes)}m ago`;
+  if (hours < 24) return `${Math.floor(hours)}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void }) {
   const [accounts, setAccounts] = useState<AccountCredentials[]>([]);
   const [statuses, setStatuses] = useState<Record<string, AccountStatusEntry['status']>>({});
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Re-render every 30s so the relative "checked X ago" label stays
+  // accurate while the popup is open. Popup is short-lived in practice,
+  // but this matters when the user leaves it pinned.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   async function refresh() {
     const creds = await loadCredentials();
@@ -56,6 +76,7 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
         map[entry.accountId] = entry.status;
       }
       setStatuses(map);
+      setLastCheckedAt(Date.now());
     } finally {
       setRefreshing(false);
     }
@@ -76,14 +97,21 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
         <div className="flex justify-between items-center mb-2">
           <h2 className="font-medium">Connected accounts</h2>
           {accounts.length > 0 && (
-            <button
-              type="button"
-              onClick={refreshStatuses}
-              disabled={refreshing}
-              className="text-xs text-gray-500 hover:underline disabled:opacity-50"
-            >
-              {refreshing ? 'checking…' : 'recheck'}
-            </button>
+            <div className="flex items-center gap-2 text-xs">
+              {lastCheckedAt && (
+                <span className="text-gray-400">
+                  checked {formatAge(lastCheckedAt, now)}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={refreshStatuses}
+                disabled={refreshing}
+                className="text-gray-500 hover:underline disabled:opacity-50"
+              >
+                {refreshing ? 'checking…' : 'recheck'}
+              </button>
+            </div>
           )}
         </div>
         {accounts.length === 0 ? (
