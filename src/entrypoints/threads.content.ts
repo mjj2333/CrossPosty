@@ -36,6 +36,13 @@ export default defineContentScript({
   },
 });
 
+// The actual compose endpoints Meta uses. Notification queries, timeline
+// fetches, etc. all share /graphql/query and sometimes have a `text` field
+// in their body — narrowing to these URL patterns is the surest signal
+// that what we're capturing is actually the post-creation request.
+const THREADS_COMPOSE_URL_RE =
+  /\/api\/v1\/media\/(?:configure_text_only_post|configure_post|configure_to_clips)\b/i;
+
 function installTemplateCapture(): void {
   window.addEventListener('crossposty:intercept', (ev) => {
     if (!isContextAlive()) return;
@@ -44,11 +51,11 @@ function installTemplateCapture(): void {
     ).detail;
     if (!THREADS_COMPOSE_RE.test(detail.url)) return;
     if (detail.body.length === 0) return;
-    // Only persist as template if our body parser can find a text field —
-    // that's our signal that this is actually a compose request. The dozen
-    // /graphql/query reads that fire alongside each compose all match
-    // THREADS_COMPOSE_RE but have no text field; without this filter the
-    // last one would clobber the real compose template.
+    // Two-stage filter: URL must look like a compose endpoint, AND the body
+    // parser must find a text field. The body-field check alone was matching
+    // unrelated requests (notification badge queries with `text` somewhere
+    // in their response data).
+    if (!THREADS_COMPOSE_URL_RE.test(detail.url)) return;
     const parsed = parseThreadsComposeBody(detail.body);
     if (!parsed) return;
     const template = buildThreadsTemplate(detail.url, detail.headers, detail.body);
