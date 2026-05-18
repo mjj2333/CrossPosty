@@ -22,9 +22,15 @@ export const xInterceptor: SourceInterceptor = {
   install(onIntercept) {
     function handle(ev: Event) {
       const detail = (ev as CustomEvent<{ url: string; body: string }>).detail;
-      if (!/x\.com\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(detail.url)) return;
+      if (!/(?:x\.com|twitter\.com)\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(detail.url)) return;
       const post = parseCreateTweetBody(detail.body);
-      if (post) onIntercept(post, () => undefined);
+      if (!post) {
+        console.warn('[CrossPosty] CreateTweet body parsed but no tweet_text found', {
+          bodyPreview: detail.body.slice(0, 200),
+        });
+        return;
+      }
+      onIntercept(post, () => undefined);
     }
     window.addEventListener('crossposty:intercept', handle);
     return () => window.removeEventListener('crossposty:intercept', handle);

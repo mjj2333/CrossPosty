@@ -6,8 +6,10 @@ export default defineContentScript({
   matches: ['*://x.com/*'],
   runAt: 'document_start',
   main() {
+    console.log('[CrossPosty] x.com content script loaded');
     injectMainWorldHook();
     xInterceptor.install((post) => {
+      console.log('[CrossPosty] x interceptor fired — mounting panel');
       mountComposerPanel(post);
     });
     installTemplateCapture();
@@ -16,8 +18,16 @@ export default defineContentScript({
 
 function injectMainWorldHook(): void {
   const script = document.createElement('script');
-  script.src = chrome.runtime.getURL('/inject-fetch-hook.js');
-  script.onload = () => script.remove();
+  const src = chrome.runtime.getURL('/inject-fetch-hook.js');
+  console.log('[CrossPosty] injecting MAIN-world hook from', src);
+  script.src = src;
+  script.onload = () => {
+    console.log('[CrossPosty] MAIN-world hook script onload fired');
+    script.remove();
+  };
+  script.onerror = (e) => {
+    console.error('[CrossPosty] MAIN-world hook script FAILED to load', e);
+  };
   (document.head || document.documentElement).appendChild(script);
 }
 

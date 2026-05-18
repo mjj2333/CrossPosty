@@ -10,6 +10,7 @@ export default defineUnlistedScript(() => {
   type Marker = { __crossposty_installed?: boolean };
   if ((window as unknown as Marker).__crossposty_installed) return;
   (window as unknown as Marker).__crossposty_installed = true;
+  console.log('[CrossPosty] fetch hook installed in MAIN world');
 
   const origFetch = window.fetch.bind(window);
   window.fetch = async function (input, init) {
@@ -21,13 +22,20 @@ export default defineUnlistedScript(() => {
             ? input.toString()
             : (input as Request).url;
       const interesting =
-        /x\.com\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(url) ||
+        /(?:x\.com|twitter\.com)\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(url) ||
         /bsky\.social\/xrpc\/com\.atproto\.repo\.createRecord/.test(url);
+      if (interesting) {
+        console.log('[CrossPosty] fetch hook saw interesting URL', url);
+      }
       if (interesting && init?.body) {
         let bodyText = '';
         if (typeof init.body === 'string') bodyText = init.body;
         else if (init.body instanceof Blob) bodyText = await init.body.text();
         const headers = normalizeHeaders(init.headers);
+        console.log('[CrossPosty] dispatching crossposty:intercept', {
+          urlMatched: url,
+          bodyChars: bodyText.length,
+        });
         window.dispatchEvent(
           new CustomEvent('crossposty:intercept', {
             detail: { url, body: bodyText, headers },
