@@ -1,7 +1,7 @@
 // Patches window.fetch AND XMLHttpRequest in MAIN world before page scripts run.
 //
 // MUST be a `world: 'MAIN'` content script (declared in the manifest) so it
-// executes synchronously before any page scripts — otherwise the page bundle
+// executes synchronously before any page scripts - otherwise the page bundle
 // can capture references to fetch/XHR into its closure before we patch them.
 //
 // We hook two classes of requests:
@@ -47,9 +47,9 @@ export default defineContentScript({
       );
     }
 
-    // Pure read-only CDN hosts — bypass entirely.
+    // Pure read-only CDN hosts - bypass entirely.
     const CDN_BYPASS_RE = /(?:^https?:\/\/)?(?:pbs\.twimg\.com|video\.twimg\.com|ton\.x\.com)\//;
-    // Media upload endpoints — we tap these for capture.
+    // Media upload endpoints - we tap these for capture.
     const X_MEDIA_UPLOAD_RE = /(?:upload\.(?:twitter|x)\.com)\/i\/media\/upload\.json/;
     const BSKY_UPLOAD_BLOB_RE = /\/xrpc\/com\.atproto\.repo\.uploadBlob/;
 
@@ -126,7 +126,7 @@ export default defineContentScript({
               dispatchIntercept(url, bodyText, headers);
             } else {
               console.warn(
-                '[CrossPosty] interesting URL but body unreadable — body type unsupported?',
+                '[CrossPosty] interesting URL but body unreadable - body type unsupported?',
                 { url, hasInit: !!init, inputIsRequest: input instanceof Request },
               );
             }
@@ -198,7 +198,7 @@ export default defineContentScript({
       init: RequestInit | undefined,
       origFetch: typeof fetch,
     ): Promise<Response> {
-      // Read the request body BEFORE firing the fetch — the body is the
+      // Read the request body BEFORE firing the fetch - the body is the
       // raw image bytes that we want to keep a copy of.
       const reqBlob = await readBodyAsBlob(input, init);
       const response = await origFetch(input, init);

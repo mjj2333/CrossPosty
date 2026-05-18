@@ -3,6 +3,10 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   srcDir: 'src',
   modules: ['@wxt-dev/module-react'],
+  // Note: ASCII-safety is enforced by scripts/ascii-safe-output.mjs, run as
+  // a post-build step from the `build` npm script. Rolldown's charset option
+  // doesn't currently escape noncharacters embedded in string literals (Dexie
+  // ships a literal U+FFFF for IndexedDB range queries that Chrome rejects).
   manifest: {
     name: 'CrossPosty',
     description:

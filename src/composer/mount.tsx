@@ -21,7 +21,7 @@ export function mountComposerPanel(intercepted: InterceptedPost): void {
   const mountPoint = document.createElement('div');
   shadow.appendChild(mountPoint);
   if (!document.body) {
-    console.error('[CrossPosty] document.body missing — cannot mount panel');
+    console.error('[CrossPosty] document.body missing - cannot mount panel');
     return;
   }
   document.body.appendChild(host);

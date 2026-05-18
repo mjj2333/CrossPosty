@@ -12,7 +12,7 @@ type XSessionData = {
   screenName?: string;
 };
 
-// Headers we strip from the template — these are computed per-request and X
+// Headers we strip from the template - these are computed per-request and X
 // either auto-generates them or doesn't care. Keeping them stale causes 4xx.
 const VOLATILE_HEADERS = new Set([
   'x-csrf-token', // rotates per session; we substitute from current ct0 cookie
@@ -37,7 +37,7 @@ function mutateTweetText(bodyJson: unknown, text: string, newMediaIds: string[])
   if (typeof variables === 'object' && variables !== null) {
     const v = variables as Record<string, unknown>;
     v.tweet_text = text;
-    // Posting fresh content — drop any reply/quote linkage from the template.
+    // Posting fresh content - drop any reply/quote linkage from the template.
     delete v.reply;
     delete v.quote_tweet_id;
     // Replace captured media references with the fresh IDs we just uploaded
@@ -99,7 +99,7 @@ async function uploadXMedia(
   }
   const mediaId = initJson.media_id_string;
 
-  // APPEND — single segment for v1 (sufficient for typical images).
+  // APPEND - single segment for v1 (sufficient for typical images).
   const appendForm = new FormData();
   appendForm.append('command', 'APPEND');
   appendForm.append('media_id', mediaId);
@@ -108,7 +108,7 @@ async function uploadXMedia(
   const appendRes = await fetch(baseUrl, {
     method: 'POST',
     credentials: 'include',
-    // Don't set content-type — fetch fills in the multipart boundary.
+    // Don't set content-type - fetch fills in the multipart boundary.
     headers: commonHeaders,
     body: appendForm,
   });
@@ -261,7 +261,7 @@ export const xAdapter: PlatformAdapter = {
       const json = (await res.json()) as unknown;
       const restId = extractTweetId(json);
       if (!restId) {
-        // 2xx but we couldn't find an ID — could mean the response shape
+        // 2xx but we couldn't find an ID - could mean the response shape
         // changed, or the post was rejected with a soft error. Log the
         // top-level shape (not contents) so we can fix the extractor.
         console.warn('[CrossPosty] X post 2xx but no rest_id extracted', {

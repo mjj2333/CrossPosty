@@ -9,7 +9,7 @@ export default defineContentScript({
   main() {
     console.log('[CrossPosty] x.com ISOLATED content script loaded');
     xInterceptor.install((post) => {
-      console.log('[CrossPosty] x interceptor fired — mounting panel');
+      console.log('[CrossPosty] x interceptor fired - mounting panel');
       mountComposerPanel(post);
     });
     installTemplateCapture();

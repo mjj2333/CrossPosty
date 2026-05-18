@@ -37,7 +37,7 @@ export function PlatformVariant({
             onChange={(e) => onToggle(e.target.checked)}
           />
           <span style={{ textTransform: 'capitalize' }}>{account.platformId}</span>
-          <span style={{ color: '#888' }}>— {account.displayName}</span>
+          <span style={{ color: '#888' }}>- {account.displayName}</span>
         </label>
         <span className={over ? 'crossposty-overlimit' : undefined}>
           {text.length} / {charLimit}
@@ -51,8 +51,8 @@ export function PlatformVariant({
       {mediaCount > 0 && (
         <div className="crossposty-media-indicator">
           {supportsMedia
-            ? `📎 ${mediaCount} image${mediaCount === 1 ? '' : 's'} attached`
-            : `⚠️ ${mediaCount} image${mediaCount === 1 ? '' : 's'} — not forwarded to ${account.platformId} (text only)`}
+            ? `${mediaCount} image${mediaCount === 1 ? '' : 's'} attached`
+            : `(!) ${mediaCount} image${mediaCount === 1 ? '' : 's'} - not forwarded to ${account.platformId} (text only)`}
         </div>
       )}
       {result && (

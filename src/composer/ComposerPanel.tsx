@@ -61,7 +61,7 @@ export function ComposerPanel({
     const active = variants.filter((v) => v.enabled);
 
     // Media is shared across variants (same images); per-platform edits in
-    // future. We pass intercepted.media on every request — adapters decide
+    // future. We pass intercepted.media on every request - adapters decide
     // whether/how to upload (e.g. LinkedIn currently ignores media in v1).
     const media = intercepted.media;
 
@@ -87,7 +87,7 @@ export function ComposerPanel({
         return {
           ...v,
           result: r.success
-            ? { success: true, message: r.url ? `Posted → ${r.url}` : 'Posted', url: r.url }
+            ? { success: true, message: r.url ? `Posted -> ${r.url}` : 'Posted', url: r.url }
             : { success: false, message: `Failed: ${r.error}` },
         };
       }),
@@ -98,14 +98,14 @@ export function ComposerPanel({
   return (
     <div className="crossposty-panel">
       <div className="crossposty-header">
-        <span className="crossposty-title">Cross-post to…</span>
+        <span className="crossposty-title">Cross-post to...</span>
         <button type="button" className="crossposty-close" onClick={onClose}>
-          ×
+          x
         </button>
       </div>
       <div className="crossposty-body">
         {!loaded ? (
-          <p className="crossposty-empty">Loading destinations…</p>
+          <p className="crossposty-empty">Loading destinations...</p>
         ) : variants.length === 0 ? (
           <p className="crossposty-empty">
             No destination accounts connected. Open the extension popup to add one.
@@ -132,7 +132,7 @@ export function ComposerPanel({
             disabled={busy || !variants.some((v) => v.enabled)}
             onClick={crosspost}
           >
-            {busy ? 'Posting…' : 'Cross-post'}
+            {busy ? 'Posting...' : 'Cross-post'}
           </button>
         )}
       </div>

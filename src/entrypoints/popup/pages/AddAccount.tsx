@@ -18,7 +18,7 @@ function fieldsFor(platformId: AddableId): Field[] {
         },
         {
           name: 'appPassword',
-          label: 'App password (BlueSky → Settings → App Passwords)',
+          label: 'App password (BlueSky -> Settings -> App Passwords)',
           type: 'password',
           placeholder: 'xxxx-xxxx-xxxx-xxxx',
         },
@@ -42,11 +42,11 @@ function fieldsFor(platformId: AddableId): Field[] {
 function helperFor(platformId: AddableId): string | null {
   switch (platformId) {
     case 'linkedin':
-      return "Make sure you're logged in at linkedin.com in this browser, then click Connect. We read your session cookies directly — they stay on this device.";
+      return "Make sure you're logged in at linkedin.com in this browser, then click Connect. We read your session cookies directly - they stay on this device.";
     case 'x':
-      return "Make sure you're logged in at x.com, then click Connect. After connecting, post one tweet natively so CrossPosty can learn the current request shape — then cross-posts to X work.";
+      return "Make sure you're logged in at x.com, then click Connect. After connecting, post one tweet natively so CrossPosty can learn the current request shape - then cross-posts to X work.";
     case 'mastodon':
-      return 'Enter your instance (e.g. mastodon.social). A login window will open — sign in once and authorize CrossPosty.';
+      return 'Enter your instance (e.g. mastodon.social). A login window will open - sign in once and authorize CrossPosty.';
     case 'bluesky':
       return null;
   }
@@ -71,7 +71,7 @@ export function AddAccountPage({
     setError(null);
     try {
       // Federated platforms (Mastodon) need host permission granted at runtime
-      // for whatever instance the user typed — we can't list every server in
+      // for whatever instance the user typed - we can't list every server in
       // host_permissions upfront. Chrome will show a one-time allow prompt
       // per instance.
       if (platformId === 'mastodon') {
@@ -99,7 +99,7 @@ export function AddAccountPage({
         | undefined;
       if (!response) {
         setError(
-          'No response from background. Reload the extension at chrome://extensions (click the 🔄 icon on the CrossPosty card) and try again.',
+          'No response from background. Reload the extension at chrome://extensions (click the reload icon on the CrossPosty card) and try again.',
         );
         return;
       }
@@ -118,7 +118,7 @@ export function AddAccountPage({
   return (
     <div className="space-y-3">
       <button type="button" onClick={onDone} className="text-xs text-gray-500 hover:underline">
-        ← back
+        {'<- back'}
       </button>
       <h2 className="font-medium capitalize">Add {platformId} account</h2>
       {helper && <p className="text-xs text-gray-600">{helper}</p>}
@@ -143,7 +143,7 @@ export function AddAccountPage({
         disabled={busy}
         className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm disabled:opacity-50"
       >
-        {busy ? 'Connecting…' : 'Connect'}
+        {busy ? 'Connecting...' : 'Connect'}
       </button>
     </div>
   );

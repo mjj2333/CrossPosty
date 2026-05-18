@@ -8,7 +8,7 @@ export default defineContentScript({
   main() {
     console.log('[CrossPosty] bsky.app ISOLATED content script loaded');
     bskyInterceptor.install((post) => {
-      console.log('[CrossPosty] bsky interceptor fired — mounting panel');
+      console.log('[CrossPosty] bsky interceptor fired - mounting panel');
       mountComposerPanel(post);
     });
     installMediaSegmentSink();

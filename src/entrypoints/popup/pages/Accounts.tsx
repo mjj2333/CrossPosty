@@ -34,7 +34,7 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
                 className="flex justify-between items-center text-sm border rounded p-2"
               >
                 <span>
-                  <strong className="capitalize">{a.platformId}</strong> — {a.displayName}
+                  <strong className="capitalize">{a.platformId}</strong> - {a.displayName}
                 </span>
                 <button
                   type="button"

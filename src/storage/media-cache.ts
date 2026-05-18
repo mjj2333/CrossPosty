@@ -1,7 +1,7 @@
 // IndexedDB-backed cache of media segments captured during platform uploads.
 //
-// Captured by main-world.content.ts → dispatched via CustomEvent →
-// stashed here by the ISOLATED content script → looked up by the source
+// Captured by main-world.content.ts -> dispatched via CustomEvent ->
+// stashed here by the ISOLATED content script -> looked up by the source
 // interceptor when a compose request fires referencing those IDs.
 //
 // Keyed by (sourcePlatform, mediaId). For X the mediaId is the

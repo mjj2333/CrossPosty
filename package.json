@@ -8,8 +8,8 @@
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
-    "build": "wxt build",
-    "build:firefox": "wxt build -b firefox",
+    "build": "wxt build && node scripts/ascii-safe-output.mjs",
+    "build:firefox": "wxt build -b firefox && node scripts/ascii-safe-output.mjs",
     "zip": "wxt zip",
     "compile": "tsc --noEmit",
     "test": "vitest run",
