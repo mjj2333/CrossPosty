@@ -53,6 +53,44 @@ async function readCookie(name: string): Promise<string | null> {
   return c?.value ?? null;
 }
 
+// X's CreateTweet response shape has shifted over time and contains the
+// tweet ID at several possible paths. Walk known locations + a generic
+// deep-scan for any "rest_id"/"id_str" near a result/legacy object so we
+// don't break on minor shape changes.
+function extractTweetId(json: unknown): string {
+  const knownPaths: Array<(j: any) => unknown> = [
+    (j) => j?.data?.create_tweet?.tweet_results?.result?.rest_id,
+    (j) => j?.data?.create_tweet?.tweet_results?.result?.legacy?.id_str,
+    (j) => j?.data?.create_tweet?.tweet_results?.result?.tweet?.rest_id,
+    (j) => j?.data?.tweet_results?.result?.rest_id,
+    (j) => j?.create_tweet?.tweet_results?.result?.rest_id,
+  ];
+  for (const get of knownPaths) {
+    const v = get(json);
+    if (typeof v === 'string' && /^\d+$/.test(v)) return v;
+  }
+  // Generic fallback: walk the object looking for the first numeric string
+  // that matches rest_id or id_str.
+  const seen = new WeakSet<object>();
+  function walk(node: unknown): string | null {
+    if (typeof node !== 'object' || node === null) return null;
+    if (seen.has(node)) return null;
+    seen.add(node);
+    const obj = node as Record<string, unknown>;
+    for (const [k, v] of Object.entries(obj)) {
+      if ((k === 'rest_id' || k === 'id_str') && typeof v === 'string' && /^\d{8,}$/.test(v)) {
+        return v;
+      }
+    }
+    for (const v of Object.values(obj)) {
+      const found = walk(v);
+      if (found) return found;
+    }
+    return null;
+  }
+  return walk(json) ?? '';
+}
+
 export const xAdapter: PlatformAdapter = {
   id: 'x',
   displayName: 'X',
@@ -118,12 +156,16 @@ export const xAdapter: PlatformAdapter = {
           retryable: res.status >= 500 || res.status === 429,
         };
       }
-      const json = (await res.json()) as {
-        data?: {
-          create_tweet?: { tweet_results?: { result?: { rest_id?: string } } };
-        };
-      };
-      const restId = json.data?.create_tweet?.tweet_results?.result?.rest_id ?? '';
+      const json = (await res.json()) as unknown;
+      const restId = extractTweetId(json);
+      if (!restId) {
+        // 2xx but we couldn't find an ID — could mean the response shape
+        // changed, or the post was rejected with a soft error. Log the
+        // top-level shape (not contents) so we can fix the extractor.
+        console.warn('[CrossPosty] X post 2xx but no rest_id extracted', {
+          topLevelKeys: typeof json === 'object' && json !== null ? Object.keys(json) : null,
+        });
+      }
       const cred = _credentials.data as unknown as XSessionData;
       const screen = cred.screenName ?? 'i';
       return {
