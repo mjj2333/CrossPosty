@@ -1,7 +1,7 @@
 {
   "client_id": "https://mjj2333.github.io/CrossPosty/client-metadata.json",
   "client_name": "CrossPosty",
-  "client_uri": "https://github.com/mjj2333/CrossPosty",
+  "client_uri": "https://mjj2333.github.io/CrossPosty",
   "redirect_uris": [
     "https://mfhnecceaeljjgkaoijfdjhpedhhnjlg.chromiumapp.org/"
   ],
