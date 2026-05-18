@@ -1,0 +1,92 @@
+.crossposty-panel {
+  position: fixed;
+  right: 16px;
+  top: 80px;
+  width: 380px;
+  max-height: 80vh;
+  background: #fff;
+  color: #111;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+  overflow: auto;
+  z-index: 2147483646;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.crossposty-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.crossposty-title { font-weight: 600; }
+.crossposty-close {
+  background: none;
+  border: 0;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: #666;
+  padding: 0 4px;
+}
+.crossposty-close:hover { color: #111; }
+.crossposty-body {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.crossposty-empty { font-size: 12px; color: #666; }
+.crossposty-variant {
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 8px;
+  background: #fafafa;
+}
+.crossposty-variant-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #555;
+  margin-bottom: 6px;
+}
+.crossposty-variant-head label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.crossposty-variant textarea {
+  width: 100%;
+  min-height: 80px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 6px;
+  font: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.crossposty-cta {
+  background: #059669;
+  color: white;
+  border: 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+}
+.crossposty-cta:hover { background: #047857; }
+.crossposty-cta:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.crossposty-result { font-size: 12px; margin-top: 4px; }
+.crossposty-result.success { color: #059669; }
+.crossposty-result.fail { color: #dc2626; }
+.crossposty-result a { color: inherit; text-decoration: underline; }
+.crossposty-overlimit { color: #dc2626; font-weight: 500; }
