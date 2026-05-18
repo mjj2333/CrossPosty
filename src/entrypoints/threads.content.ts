@@ -1,5 +1,9 @@
 import { mountComposerPanel } from '../composer/mount';
-import { threadsInterceptor, THREADS_COMPOSE_RE } from '../interceptors/threads';
+import {
+  parseThreadsComposeBody,
+  threadsInterceptor,
+  THREADS_COMPOSE_RE,
+} from '../interceptors/threads';
 import { installOrphanRejectionSuppressor, isContextAlive } from '../lib/context';
 import { debugLog } from '../lib/debug';
 import {
@@ -39,9 +43,14 @@ function installTemplateCapture(): void {
       ev as CustomEvent<{ url: string; body: string; headers: Record<string, string> }>
     ).detail;
     if (!THREADS_COMPOSE_RE.test(detail.url)) return;
-    // Only capture compose-shaped bodies (have a text field) to avoid
-    // saving every threads.net GraphQL read as a "template".
     if (detail.body.length === 0) return;
+    // Only persist as template if our body parser can find a text field —
+    // that's our signal that this is actually a compose request. The dozen
+    // /graphql/query reads that fire alongside each compose all match
+    // THREADS_COMPOSE_RE but have no text field; without this filter the
+    // last one would clobber the real compose template.
+    const parsed = parseThreadsComposeBody(detail.body);
+    if (!parsed) return;
     const template = buildThreadsTemplate(detail.url, detail.headers, detail.body);
     debugLog('[CrossPosty] captured Threads template', {
       url: template.url,

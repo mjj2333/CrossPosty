@@ -1,9 +1,11 @@
 import type { InterceptedPost, SourceInterceptor } from './types';
 
-// We don't know the exact compose body shape yet — threads.net uses Meta's
-// internal GraphQL with a Barcelona* mutation. As a first pass we look for
-// common text-field names in the body, regardless of transport.
-function parseThreadsComposeBody(body: string): InterceptedPost | null {
+// The Threads compose request goes to /api/v1/media/configure_text_only_post/
+// (or /configure_post/ for media). All the other /graphql/query traffic is
+// reads + unrelated mutations. We look for common text-field names in the
+// body and dispatch only when one is present — that's our signal that the
+// request is actually a compose.
+export function parseThreadsComposeBody(body: string): InterceptedPost | null {
   // Try JSON first (covers application/json bodies)
   let parsed: unknown = null;
   try {
