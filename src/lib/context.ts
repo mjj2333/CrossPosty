@@ -20,3 +20,23 @@ export function isContextInvalidatedError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return /context invalidated|Extension context/i.test(err.message);
 }
+
+// Installs a window-level handler that swallows "Extension context invalidated"
+// unhandled rejections. These are inevitable when the user reloads the
+// extension while a tab is still open — Chrome reports them loudly even when
+// our code catches them properly elsewhere. We surface a single info-level
+// hint instead of a stack-trace per orphaned async chain.
+export function installOrphanRejectionSuppressor(): void {
+  let warned = false;
+  window.addEventListener('unhandledrejection', (ev) => {
+    if (isContextInvalidatedError(ev.reason)) {
+      ev.preventDefault();
+      if (!warned) {
+        warned = true;
+        console.info(
+          '[CrossPosty] extension was reloaded; orphaned async calls suppressed. Refresh this tab to resume.',
+        );
+      }
+    }
+  });
+}

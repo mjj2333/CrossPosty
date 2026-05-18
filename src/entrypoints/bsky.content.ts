@@ -1,6 +1,6 @@
 import { mountComposerPanel } from '../composer/mount';
 import { bskyInterceptor } from '../interceptors/bsky';
-import { isContextAlive } from '../lib/context';
+import { installOrphanRejectionSuppressor, isContextAlive } from '../lib/context';
 import { storeSegment } from '../storage/media-cache';
 
 export default defineContentScript({
@@ -8,6 +8,7 @@ export default defineContentScript({
   runAt: 'document_start',
   main() {
     console.log('[CrossPosty] bsky.app ISOLATED content script loaded');
+    installOrphanRejectionSuppressor();
     bskyInterceptor.install((post) => {
       if (!isContextAlive()) {
         console.warn(

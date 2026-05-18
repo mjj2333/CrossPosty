@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { InterceptedPost } from '../interceptors/types';
+import { isContextInvalidatedError } from '../lib/context';
 import type { CrossPostResultEntry, Message } from '../lib/messaging';
 import type { AccountCredentials, PlatformId } from '../platforms/types';
 import { PlatformVariant, type VariantResult } from './PlatformVariant';
@@ -34,21 +35,31 @@ export function ComposerPanel({
   const [variants, setVariants] = useState<VariantState[]>([]);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [orphaned, setOrphaned] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const listMsg: Message = { type: 'LIST_CREDENTIALS', payload: null };
-      const response = (await chrome.runtime.sendMessage(listMsg)) as {
-        type: 'LIST_CREDENTIALS_RESPONSE';
-        payload: AccountCredentials[];
-      };
-      const destinations = response.payload.filter(
-        (c) => c.platformId !== intercepted.sourcePlatformId,
-      );
-      setVariants(
-        destinations.map((account) => ({ account, text: intercepted.text, enabled: true })),
-      );
-      setLoaded(true);
+      try {
+        const listMsg: Message = { type: 'LIST_CREDENTIALS', payload: null };
+        const response = (await chrome.runtime.sendMessage(listMsg)) as {
+          type: 'LIST_CREDENTIALS_RESPONSE';
+          payload: AccountCredentials[];
+        };
+        const destinations = response.payload.filter(
+          (c) => c.platformId !== intercepted.sourcePlatformId,
+        );
+        setVariants(
+          destinations.map((account) => ({ account, text: intercepted.text, enabled: true })),
+        );
+        setLoaded(true);
+      } catch (err) {
+        if (isContextInvalidatedError(err)) {
+          setOrphaned(true);
+          setLoaded(true);
+        } else {
+          throw err;
+        }
+      }
     })();
   }, [intercepted]);
 
@@ -65,19 +76,29 @@ export function ComposerPanel({
     // whether/how to upload (e.g. LinkedIn currently ignores media in v1).
     const media = intercepted.media;
 
-    const responses = await Promise.all(
-      active.map(async (v) => {
-        const req: Message = {
-          type: 'CROSSPOST_REQUEST',
-          payload: {
-            content: { text: v.text, media },
-            accountIds: [v.account.accountId],
-          },
-        };
-        const res = (await chrome.runtime.sendMessage(req)) as CrossPostResultEntry[];
-        return res[0];
-      }),
-    );
+    let responses: Array<CrossPostResultEntry | undefined>;
+    try {
+      responses = await Promise.all(
+        active.map(async (v) => {
+          const req: Message = {
+            type: 'CROSSPOST_REQUEST',
+            payload: {
+              content: { text: v.text, media },
+              accountIds: [v.account.accountId],
+            },
+          };
+          const res = (await chrome.runtime.sendMessage(req)) as CrossPostResultEntry[];
+          return res[0];
+        }),
+      );
+    } catch (err) {
+      if (isContextInvalidatedError(err)) {
+        setOrphaned(true);
+        setBusy(false);
+        return;
+      }
+      throw err;
+    }
 
     setVariants((vs) =>
       vs.map((v) => {
@@ -104,7 +125,11 @@ export function ComposerPanel({
         </button>
       </div>
       <div className="crossposty-body">
-        {!loaded ? (
+        {orphaned ? (
+          <p className="crossposty-empty">
+            CrossPosty was reloaded. Refresh this tab to keep cross-posting.
+          </p>
+        ) : !loaded ? (
           <p className="crossposty-empty">Loading destinations...</p>
         ) : variants.length === 0 ? (
           <p className="crossposty-empty">

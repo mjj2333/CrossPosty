@@ -1,6 +1,6 @@
 import { mountComposerPanel } from '../composer/mount';
 import { xInterceptor } from '../interceptors/x';
-import { isContextAlive } from '../lib/context';
+import { installOrphanRejectionSuppressor, isContextAlive } from '../lib/context';
 import { storeSegment } from '../storage/media-cache';
 import { buildTemplate, saveXTemplate } from '../storage/x-template';
 
@@ -9,6 +9,7 @@ export default defineContentScript({
   runAt: 'document_start',
   main() {
     console.log('[CrossPosty] x.com ISOLATED content script loaded');
+    installOrphanRejectionSuppressor();
     xInterceptor.install((post) => {
       if (!isContextAlive()) {
         console.warn(
