@@ -154,4 +154,25 @@ export const mastodonAdapter: PlatformAdapter = {
       return false;
     }
   },
+
+  async getStatus(credentials) {
+    try {
+      const c = client(credentials.data as unknown as MastodonSessionData);
+      await c.v1.accounts.verifyCredentials();
+      // Mastodon access tokens issued via OAuth are typically non-expiring
+      // (no expires_in on the token response). We surface that explicitly
+      // so the popup doesn't claim a missing expiry is a problem.
+      return {
+        ok: true,
+        severity: 'green',
+        message: 'Mastodon session healthy. Token does not expire.',
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        severity: 'red',
+        message: `Mastodon check failed: ${String(err).slice(0, 120)}`,
+      };
+    }
+  },
 };

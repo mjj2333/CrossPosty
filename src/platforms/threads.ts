@@ -256,20 +256,31 @@ export const threadsAdapter: PlatformAdapter = {
   },
 
   async getStatus() {
-    const session = await readSessionCookie();
-    if (!session?.value) {
+    // Find the sessionid cookie on either host so we can also surface
+    // its expiration to the popup.
+    let sessionCookie: chrome.cookies.Cookie | undefined;
+    for (const url of ['https://www.threads.com', 'https://www.threads.net']) {
+      const c = await chrome.cookies.get({ url, name: 'sessionid' });
+      if (c?.value) {
+        sessionCookie = c;
+        break;
+      }
+    }
+    if (!sessionCookie) {
       return {
         ok: false,
         severity: 'red',
         message: 'Not logged in to threads.com. Log in there, then return here.',
       };
     }
+    const expiresAt = sessionCookie.expirationDate;
     const template = await loadThreadsTemplate();
     if (!template) {
       return {
         ok: false,
         severity: 'yellow',
         message: 'No request template yet. Post once natively on threads.com to enable cross-posting.',
+        expiresAt,
       };
     }
     const ageDays = (Date.now() - template.capturedAt) / 86_400_000;
@@ -278,6 +289,7 @@ export const threadsAdapter: PlatformAdapter = {
         ok: true,
         severity: 'yellow',
         message: `Template ${Math.floor(ageDays)} days old. Post natively to refresh.`,
+        expiresAt,
       };
     }
     const ageHours = (Date.now() - template.capturedAt) / 3_600_000;
@@ -291,6 +303,7 @@ export const threadsAdapter: PlatformAdapter = {
       ok: true,
       severity: 'green',
       message: `Logged in. Template captured ${ageLabel}.`,
+      expiresAt,
     };
   },
 };

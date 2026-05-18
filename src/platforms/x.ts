@@ -408,21 +408,23 @@ export const xAdapter: PlatformAdapter = {
   // Cross-posting needs both. Yellow = "you can fix this by posting once".
   async getStatus(_credentials) {
     const cookies = await chrome.cookies.getAll({ domain: 'x.com' });
-    const hasAuth = cookies.some((c) => c.name === 'auth_token');
+    const authCookie = cookies.find((c) => c.name === 'auth_token');
     const hasCt0 = cookies.some((c) => c.name === 'ct0');
-    if (!hasAuth || !hasCt0) {
+    if (!authCookie || !hasCt0) {
       return {
         ok: false,
         severity: 'red',
         message: 'Not logged in to x.com. Log in there, then return here.',
       };
     }
+    const expiresAt = authCookie.expirationDate;
     const template = await loadXTemplate();
     if (!template) {
       return {
         ok: false,
         severity: 'yellow',
         message: 'No request template yet. Post one tweet natively on x.com to enable cross-posting.',
+        expiresAt,
       };
     }
     const ageDays = (Date.now() - template.capturedAt) / 86_400_000;
@@ -431,6 +433,7 @@ export const xAdapter: PlatformAdapter = {
         ok: true,
         severity: 'yellow',
         message: `Template ${Math.floor(ageDays)} days old. Post natively to refresh.`,
+        expiresAt,
       };
     }
     const ageHours = (Date.now() - template.capturedAt) / 3_600_000;
@@ -444,6 +447,7 @@ export const xAdapter: PlatformAdapter = {
       ok: true,
       severity: 'green',
       message: `Logged in. Template captured ${ageLabel}.`,
+      expiresAt,
     };
   },
 };

@@ -309,4 +309,80 @@ export const blueskyAdapter: PlatformAdapter = {
       return false;
     }
   },
+
+  async getStatus(credentials) {
+    const data = credentials.data as unknown as BlueskySessionData;
+    if (isOAuth(data)) {
+      // Liveness check + report the access token's expiry. Refresh is
+      // continuous so the meaningful "you must re-auth" moment is when
+      // the refresh token expires — but atproto refresh tokens are opaque
+      // and we don't know that timestamp client-side. Surface the access
+      // token expiry instead so the user can see the session is healthy.
+      try {
+        let session: AtprotoOAuthSession = data;
+        const r = await pdsFetch(session, '/xrpc/com.atproto.server.getSession', {
+          method: 'GET',
+        });
+        session = r.session;
+        await persistIfOAuthRotated(credentials, data, session);
+        if (!r.response.ok) {
+          return {
+            ok: false,
+            severity: 'red',
+            message: `OAuth session rejected (HTTP ${r.response.status}).`,
+          };
+        }
+        return {
+          ok: true,
+          severity: 'green',
+          message: 'OAuth session healthy. Access token auto-refreshes.',
+          expiresAt: session.expiresAt,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          severity: 'red',
+          message: `OAuth check failed: ${String(err).slice(0, 120)}`,
+        };
+      }
+    }
+    // App-password path: validate via @atproto/api and decode the refresh
+    // JWT's exp claim. Refresh JWT lifetime is the practical "needs
+    // re-auth" point — once expired we can't get fresh access tokens.
+    try {
+      const agent = await makeAgent(data);
+      await agent.getProfile({ actor: data.handle });
+      await persistIfAppPasswordRotated(credentials, agent);
+      const refreshExp = decodeJwtExp(data.refreshJwt);
+      return {
+        ok: true,
+        severity: 'green',
+        message: 'App-password session healthy.',
+        expiresAt: refreshExp ?? undefined,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        severity: 'red',
+        message: `Session check failed: ${String(err).slice(0, 120)}`,
+      };
+    }
+  },
 };
+
+// Reads the `exp` claim from a JWT without verifying the signature. atproto
+// app-password refresh JWTs carry this claim and we only need the value
+// for display, not authorization.
+function decodeJwtExp(jwt: string): number | null {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payloadB64 = parts[1] ?? '';
+    const padded = payloadB64.replace(/-/g, '+').replace(/_/g, '/');
+    const json = atob(padded + '==='.slice((padded.length + 3) % 4));
+    const parsed = JSON.parse(json) as { exp?: unknown };
+    return typeof parsed.exp === 'number' ? parsed.exp : null;
+  } catch {
+    return null;
+  }
+}

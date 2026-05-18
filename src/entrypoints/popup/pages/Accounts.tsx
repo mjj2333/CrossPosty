@@ -16,6 +16,20 @@ function dotColor(severity: 'green' | 'yellow' | 'red'): string {
   }
 }
 
+// Human-readable expiry. Short durations get "in X hours/days"; anything
+// further out gets the absolute date so the user can compare at a glance.
+function formatExpiry(epochSeconds: number): string {
+  const ms = epochSeconds * 1000 - Date.now();
+  if (ms <= 0) return 'expired';
+  const minutes = ms / 60_000;
+  const hours = ms / 3_600_000;
+  const days = ms / 86_400_000;
+  if (minutes < 60) return `expires in ${Math.max(1, Math.floor(minutes))}m`;
+  if (hours < 24) return `expires in ${Math.floor(hours)}h`;
+  if (days < 30) return `expires in ${Math.floor(days)}d`;
+  return `expires ${new Date(epochSeconds * 1000).toLocaleDateString()}`;
+}
+
 export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void }) {
   const [accounts, setAccounts] = useState<AccountCredentials[]>([]);
   const [statuses, setStatuses] = useState<Record<string, AccountStatusEntry['status']>>({});
@@ -107,7 +121,7 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
                       remove
                     </button>
                   </div>
-                  {status?.message && (
+                  {status && (status.message || status.expiresAt) && (
                     <p
                       className={`text-xs pl-4 ${
                         status.severity === 'red'
@@ -118,6 +132,12 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
                       }`}
                     >
                       {status.message}
+                      {status.expiresAt && (
+                        <span className="text-gray-400">
+                          {status.message ? ' — ' : ''}
+                          {formatExpiry(status.expiresAt)}
+                        </span>
+                      )}
                     </p>
                   )}
                 </li>

@@ -37,6 +37,12 @@ export type AccountStatus = {
   ok: boolean;
   severity: 'green' | 'yellow' | 'red';
   message?: string;
+  // When the session as a whole needs renewing — i.e. the moment after
+  // which the user has to re-authenticate. For cookie sessions this is
+  // the cookie's expirationDate; for OAuth refresh-bearing sessions it
+  // is the refresh token's exp claim if available. Undefined means
+  // "no fixed expiry known" — common for Mastodon access tokens.
+  expiresAt?: number; // epoch seconds
 };
 
 export interface PlatformAdapter {
