@@ -1,5 +1,14 @@
 import type { InterceptedPost } from '../interceptors/types';
-import type { AccountCredentials, PlatformId, PostContent, PostResult } from '../platforms/types';
+import type { AccountCredentials, PlatformId, PostResult } from '../platforms/types';
+import type { SerializedMedia } from './media-transport';
+
+// The wire-format version of PostContent. Blob survives chrome.runtime
+// .sendMessage's structured cloning intermittently — the bytes arrive but
+// the receiver loses Blob methods. We serialize media to base64 explicitly.
+export type SerializedPostContent = {
+  text: string;
+  media?: SerializedMedia[];
+};
 
 export type CrossPostResultEntry = {
   accountId: string;
@@ -12,7 +21,10 @@ export type AuthenticateResponse =
   | { success: false; error: string };
 
 export type Message =
-  | { type: 'CROSSPOST_REQUEST'; payload: { content: PostContent; accountIds: string[] } }
+  | {
+      type: 'CROSSPOST_REQUEST';
+      payload: { content: SerializedPostContent; accountIds: string[] };
+    }
   | { type: 'CROSSPOST_RESULT'; payload: CrossPostResultEntry }
   | { type: 'LIST_CREDENTIALS'; payload: null }
   | { type: 'LIST_CREDENTIALS_RESPONSE'; payload: AccountCredentials[] }

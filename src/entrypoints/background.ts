@@ -1,8 +1,9 @@
 import { logger } from '../lib/logger';
+import { deserializeMediaAttachments } from '../lib/media-transport';
 import type { AuthenticateResponse, CrossPostResultEntry, Message } from '../lib/messaging';
 import { onMessage } from '../lib/messaging';
 import { getAdapter } from '../platforms';
-import type { PostResult } from '../platforms/types';
+import type { PostContent, PostResult } from '../platforms/types';
 import { addCredential, loadCredentials } from '../storage/credentials';
 
 export default defineBackground(() => {
@@ -30,7 +31,12 @@ export default defineBackground(() => {
     }
 
     if (msg.type === 'CROSSPOST_REQUEST') {
-      const { content, accountIds } = msg.payload;
+      const { content: serialized, accountIds } = msg.payload;
+      // Deserialize media base64 -> real Blob before handing to adapters.
+      const content: PostContent = {
+        text: serialized.text,
+        media: serialized.media ? deserializeMediaAttachments(serialized.media) : undefined,
+      };
       const allCreds = await loadCredentials();
       const targets = allCreds.filter((c) => accountIds.includes(c.accountId));
       const settled = await Promise.allSettled(

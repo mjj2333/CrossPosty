@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { InterceptedPost } from '../interceptors/types';
 import { isContextInvalidatedError } from '../lib/context';
+import { serializeMediaAttachments } from '../lib/media-transport';
 import type { CrossPostResultEntry, Message } from '../lib/messaging';
 import type { AccountCredentials, PlatformId } from '../platforms/types';
 import { PlatformVariant, type VariantResult } from './PlatformVariant';
@@ -71,10 +72,11 @@ export function ComposerPanel({
     setBusy(true);
     const active = variants.filter((v) => v.enabled);
 
-    // Media is shared across variants (same images); per-platform edits in
-    // future. We pass intercepted.media on every request - adapters decide
-    // whether/how to upload (e.g. LinkedIn currently ignores media in v1).
-    const media = intercepted.media;
+    // Serialize media once for all variants. Blob doesn't survive
+    // chrome.runtime.sendMessage's structured cloning reliably — the
+    // receiver gets the bytes but loses .arrayBuffer / .text methods. We
+    // base64 here, reconstruct as Blob on the background side.
+    const serializedMedia = await serializeMediaAttachments(intercepted.media);
 
     let responses: Array<CrossPostResultEntry | undefined>;
     try {
@@ -83,7 +85,7 @@ export function ComposerPanel({
           const req: Message = {
             type: 'CROSSPOST_REQUEST',
             payload: {
-              content: { text: v.text, media },
+              content: { text: v.text, media: serializedMedia },
               accountIds: [v.account.accountId],
             },
           };
