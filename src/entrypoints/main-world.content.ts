@@ -27,10 +27,12 @@ export default defineContentScript({
         /(?:x\.com|twitter\.com)\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(url) ||
         // BlueSky is federated — each user's repo lives on a PDS host that
         // can be bsky.social, *.bsky.network, or a self-hosted domain. Match
-        // the AT Protocol RPC path regardless of host. The interceptor in
-        // src/interceptors/bsky.ts further filters by body shape (only post
-        // records, not likes/follows/etc.) so this loose URL match is safe.
-        /\/xrpc\/com\.atproto\.repo\.createRecord/.test(url)
+        // the AT Protocol RPC path regardless of host. bsky.app itself uses
+        // applyWrites (batch atomic write) for composing; standalone clients
+        // tend to use createRecord. Handle both. The body-shape check in
+        // src/interceptors/bsky.ts filters out non-post records (likes,
+        // follows, profile edits) that also flow through these endpoints.
+        /\/xrpc\/com\.atproto\.repo\.(?:createRecord|applyWrites)/.test(url)
       );
     }
 
