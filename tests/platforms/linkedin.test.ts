@@ -40,9 +40,10 @@ describe('linkedinAdapter', () => {
     expect(result.success).toBe(true);
     if (result.success) expect(result.remoteId).toBe('urn:li:share:abc');
 
-    const call = fetchMock.mock.calls[0];
-    expect(call).toBeDefined();
-    const init = call![1] as RequestInit;
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    expect(calls.length).toBeGreaterThan(0);
+    const init = calls[0]?.[1];
+    if (!init) throw new Error('fetch was not called with init');
     expect((init.headers as Record<string, string>)['csrf-token']).toBe('ajax:1234567890');
     expect((init.headers as Record<string, string>)['x-restli-protocol-version']).toBe('2.0.0');
   });

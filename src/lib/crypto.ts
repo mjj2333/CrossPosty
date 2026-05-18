@@ -32,15 +32,21 @@ export async function encryptJSON(
 ): Promise<{ ciphertext: string; iv: string }> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(JSON.stringify(value));
-  const buf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+  const buf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource },
+    key,
+    plaintext as BufferSource,
+  );
   return { ciphertext: bytesToBase64(new Uint8Array(buf)), iv: bytesToBase64(iv) };
 }
 
 export async function decryptJSON<T>(ciphertext: string, iv: string, key: CryptoKey): Promise<T> {
+  const ivBytes = base64ToBytes(iv);
+  const ctBytes = base64ToBytes(ciphertext);
   const buf = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: base64ToBytes(iv) },
+    { name: 'AES-GCM', iv: ivBytes as BufferSource },
     key,
-    base64ToBytes(ciphertext),
+    ctBytes as BufferSource,
   );
   return JSON.parse(new TextDecoder().decode(buf)) as T;
 }
