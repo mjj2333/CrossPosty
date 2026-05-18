@@ -78,17 +78,60 @@ export default defineContentScript({
           if (isGraphqlish(url)) {
             console.log('[CrossPosty] fetch graphql-ish URL', url);
           }
-          if (isInteresting(url) && init?.body) {
-            let bodyText = '';
-            if (typeof init.body === 'string') bodyText = init.body;
-            else if (init.body instanceof Blob) bodyText = await init.body.text();
-            dispatchIntercept(url, bodyText, normalizeHeaders(init.headers));
+          if (isInteresting(url)) {
+            const bodyText = await readFetchBody(input, init);
+            const headers = readFetchHeaders(input, init);
+            if (bodyText) {
+              dispatchIntercept(url, bodyText, headers);
+            } else {
+              console.warn(
+                '[CrossPosty] interesting URL but body unreadable — body type unsupported?',
+                { url, hasInit: !!init, inputIsRequest: input instanceof Request },
+              );
+            }
           }
-        } catch {
-          // never block original fetch on observability failure
+        } catch (err) {
+          console.warn('[CrossPosty] fetch hook threw', err);
         }
         return origFetch(input, init);
       };
+    }
+
+    async function readFetchBody(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<string> {
+      // Prefer init.body (the most common call shape). If absent, fall back
+      // to reading the Request's body via clone (single-use stream, so we
+      // never consume the original).
+      const body = init?.body;
+      if (body != null) {
+        if (typeof body === 'string') return body;
+        if (body instanceof Blob) return body.text();
+        if (body instanceof URLSearchParams) return body.toString();
+        if (body instanceof ArrayBuffer) return new TextDecoder().decode(body);
+        if (ArrayBuffer.isView(body)) {
+          return new TextDecoder().decode(body as Uint8Array);
+        }
+        return '';
+      }
+      if (input instanceof Request) {
+        try {
+          return await input.clone().text();
+        } catch {
+          return '';
+        }
+      }
+      return '';
+    }
+
+    function readFetchHeaders(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Record<string, string> {
+      if (init?.headers) return normalizeHeaders(init.headers);
+      if (input instanceof Request) return normalizeHeaders(input.headers);
+      return {};
     }
 
     function patchXHR() {
