@@ -11,7 +11,15 @@ export default defineConfig({
     name: 'CrossPosty',
     description:
       'Cross-post natively from X and BlueSky to BlueSky, Mastodon, and LinkedIn.',
-    permissions: ['storage', 'cookies', 'scripting', 'identity', 'alarms', 'offscreen'],
+    permissions: [
+      'storage',
+      'cookies',
+      'scripting',
+      'identity',
+      'alarms',
+      'offscreen',
+      'declarativeNetRequest',
+    ],
     host_permissions: [
       'https://x.com/*',
       'https://twitter.com/*',
