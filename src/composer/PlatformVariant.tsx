@@ -2,9 +2,13 @@ import type { AccountCredentials, PlatformId } from '../platforms/types';
 
 export type VariantResult = { success: boolean; message: string; url?: string };
 
-// Destinations that currently forward images. Mastodon/LinkedIn media
-// support comes in a later slice.
-const MEDIA_SUPPORTED: ReadonlySet<PlatformId> = new Set(['bluesky', 'x']);
+// Destinations that currently forward images. Threads / Mastodon /
+// LinkedIn media support comes in a later slice.
+const MEDIA_SUPPORTED: ReadonlySet<PlatformId> = new Set([
+  'bluesky',
+  'x',
+  'substack',
+]);
 
 export function PlatformVariant({
   account,
