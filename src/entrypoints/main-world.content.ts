@@ -48,6 +48,9 @@ export default defineContentScript({
       );
     }
 
+    const UPLOAD_HOST_RE =
+      /(?:^https?:\/\/)?(?:upload\.(?:twitter|x)\.com|pbs\.twimg\.com|video\.twimg\.com|ton\.x\.com)\//;
+
     function patchFetch() {
       const origFetch = window.fetch.bind(window);
       window.fetch = async function (input, init) {
@@ -58,6 +61,10 @@ export default defineContentScript({
               : input instanceof URL
                 ? input.toString()
                 : (input as Request).url;
+          // Skip *all* observation on upload hosts — never touch binary bodies.
+          if (UPLOAD_HOST_RE.test(url)) {
+            return origFetch(input, init);
+          }
           if (isGraphqlish(url)) {
             console.log('[CrossPosty] fetch graphql-ish URL', url);
           }
@@ -86,18 +93,19 @@ export default defineContentScript({
         __crossposty_headers?: Record<string, string>;
       };
 
-      XHR.open = function (
-        method: string,
-        url: string | URL,
-        async?: boolean,
-        user?: string | null,
-        password?: string | null,
-      ): void {
+      // Use rest args so we pass *exactly* what the caller passed — never
+      // change the arity of the call to origOpen. Calling open(...) with 5
+      // explicit args when X only passed 2 can subtly change X's request
+      // handling and (per user report) appears to break media upload.
+      XHR.open = function (this: XMLHttpRequest, ...args: unknown[]): void {
         const t = this as Tagged;
-        t.__crossposty_url = typeof url === 'string' ? url : url.toString();
-        t.__crossposty_method = method;
+        const method = args[0];
+        const url = args[1];
+        if (typeof method === 'string') t.__crossposty_method = method;
+        if (typeof url === 'string') t.__crossposty_url = url;
+        else if (url instanceof URL) t.__crossposty_url = url.toString();
         t.__crossposty_headers = {};
-        return origOpen.call(this, method, url, async ?? true, user ?? null, password ?? null);
+        return (origOpen as (...a: unknown[]) => void).apply(this, args);
       };
 
       XHR.setRequestHeader = function (name: string, value: string): void {
@@ -110,6 +118,12 @@ export default defineContentScript({
       XHR.send = function (body?: Document | XMLHttpRequestBodyInit | null): void {
         const t = this as Tagged;
         const url = t.__crossposty_url ?? '';
+
+        // Fast-path: skip *all* observation for upload hosts.
+        if (UPLOAD_HOST_RE.test(url)) {
+          return origSend.call(this, body);
+        }
+
         try {
           if (isGraphqlish(url)) {
             console.log('[CrossPosty] XHR graphql-ish URL', url, t.__crossposty_method);
