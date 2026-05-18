@@ -329,6 +329,21 @@ export const xAdapter: PlatformAdapter = {
       'x-csrf-token': ct0,
     };
 
+    // Diagnostic: log the body shape we are sending. Helps debug when X
+    // rejects a media-attached tweet silently (tweet_results: {} response).
+    try {
+      const bodyForLog = body as { variables?: Record<string, unknown> } | null;
+      const v = bodyForLog?.variables ?? {};
+      console.log('[CrossPosty] X CreateTweet body', {
+        tweet_text: (v as { tweet_text?: string }).tweet_text,
+        media: (v as { media?: unknown }).media,
+        topLevelKeys: bodyForLog ? Object.keys(bodyForLog) : null,
+        variableKeys: Object.keys(v),
+      });
+    } catch {
+      // never block on logging
+    }
+
     try {
       const res = await fetch(template.url, {
         method: 'POST',

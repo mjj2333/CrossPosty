@@ -35,6 +35,20 @@ function installTemplateCapture(): void {
     if (!/(?:x\.com|twitter\.com)\/i\/api\/graphql\/[^/]+\/CreateTweet/.test(detail.url)) return;
     const template = buildTemplate(detail.url, detail.headers, detail.body);
     if (template) {
+      // Diagnostic: log the captured variables.media shape so we can compare
+      // to what our adapter actually replays. If the user's native post had
+      // media attached, this will show the exact format X expects.
+      try {
+        const body = template.bodyJson as { variables?: Record<string, unknown> } | null;
+        const v = body?.variables ?? {};
+        console.log('[CrossPosty] captured X template', {
+          tweet_text: (v as { tweet_text?: string }).tweet_text,
+          media: (v as { media?: unknown }).media,
+          variableKeys: Object.keys(v),
+        });
+      } catch {
+        // never block on logging
+      }
       void saveXTemplate(template).catch((err) =>
         console.warn('[CrossPosty] saveXTemplate failed', err),
       );
