@@ -7,6 +7,41 @@ import type { PostContent, PostResult } from '../platforms/types';
 import { addCredential, loadCredentials } from '../storage/credentials';
 
 const X_UPLOAD_DNR_RULE_ID = 1;
+const THREADS_DNR_RULE_ID = 2;
+
+async function installThreadsHeaderRewrite(): Promise<void> {
+  // Same rationale as the X upload rewrite: when we replay Threads' compose
+  // request from the background service worker, Chrome sends
+  // `Origin: chrome-extension://<id>` and threads.com's edge serves the
+  // marketing 404 page instead of routing to the API. Rewriting Origin and
+  // Referer to threads.com makes the request look like a normal web-client
+  // call. Cookies are attached automatically via credentials: 'include'.
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [THREADS_DNR_RULE_ID],
+      addRules: [
+        {
+          id: THREADS_DNR_RULE_ID,
+          priority: 1,
+          condition: {
+            requestDomains: ['threads.com', 'www.threads.com', 'threads.net', 'www.threads.net', 'i.instagram.com'],
+            resourceTypes: ['xmlhttprequest'],
+          },
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [
+              { header: 'origin', operation: 'set', value: 'https://www.threads.com' },
+              { header: 'referer', operation: 'set', value: 'https://www.threads.com/' },
+            ],
+          },
+        },
+      ],
+    });
+    logger.info('declarativeNetRequest rule installed for threads.com');
+  } catch (err) {
+    logger.warn('failed to install Threads DNR rule', err);
+  }
+}
 
 async function installXUploadHeaderRewrite(): Promise<void> {
   // Our background fetch to X's media upload endpoint sends
@@ -46,6 +81,7 @@ async function installXUploadHeaderRewrite(): Promise<void> {
 export default defineBackground(() => {
   logger.info('background loaded');
   void installXUploadHeaderRewrite();
+  void installThreadsHeaderRewrite();
 
   onMessage(async (msg: Message) => {
     if (msg.type === 'LIST_CREDENTIALS') {

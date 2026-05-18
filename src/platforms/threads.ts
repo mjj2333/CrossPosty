@@ -26,15 +26,17 @@ type ThreadsSessionData = {
   capturedAt: number;
 };
 
-// Headers that are per-request signed or browser-controlled. Strip these
-// before replaying — fetch will fill in the right values.
+// Headers that are browser-controlled. Strip these before replaying —
+// fetch will fill in the right values. NOTE: we used to also strip
+// x-fb-lsd / x-ig-www-claim / x-asbd-id as "rotating tokens", but in
+// practice Meta's API rejects (404 → marketing page) without them.
+// The captured values are session-bound and valid for the lifetime of
+// the user's threads.com login, which is fine — re-capture if a session
+// rotates out.
 const VOLATILE_HEADERS = new Set([
   'content-length',
   'host',
   'cookie', // browser attaches automatically via credentials: 'include'
-  'x-asbd-id', // per-request anti-bot signed ID
-  'x-ig-www-claim', // session-bound claim string
-  'x-fb-lsd', // lsd token, rotates
 ]);
 
 function stripVolatile(headers: Record<string, string>): Record<string, string> {
@@ -43,6 +45,11 @@ function stripVolatile(headers: Record<string, string>): Record<string, string> 
     if (!VOLATILE_HEADERS.has(k.toLowerCase())) out[k] = v;
   }
   return out;
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const needle = name.toLowerCase();
+  return Object.keys(headers).some((k) => k.toLowerCase() === needle);
 }
 
 // Replace the original tweet/post text in the template body with our new
@@ -60,8 +67,9 @@ function mutatePostText(body: string, newText: string, contentType: string): str
       return body;
     }
   }
-  // URL-encoded form
-  if (contentType === 'urlencoded') {
+  // URL-encoded form — also tried for 'unknown' since older captures may
+  // lack a content-type label even though the body is form-encoded.
+  if (contentType === 'urlencoded' || contentType === 'unknown') {
     try {
       const params = new URLSearchParams(body);
       for (const key of TEXT_KEYS) {
@@ -70,27 +78,24 @@ function mutatePostText(body: string, newText: string, contentType: string): str
           return params.toString();
         }
       }
-    } catch {
-      return body;
-    }
-  }
-  // GraphQL variables often nested in form-encoded `variables=<json>`
-  // We try replacing the first JSON-shaped value that contains a text field.
-  if (contentType === 'urlencoded' || contentType === 'unknown') {
-    const params = new URLSearchParams(body);
-    if (params.has('variables')) {
-      try {
+      // GraphQL variables often nested in form-encoded `variables=<json>`.
+      // Replace the first JSON-shaped value that contains a text field.
+      if (params.has('variables')) {
         const raw = params.get('variables');
         if (raw) {
-          const parsed = JSON.parse(raw) as unknown;
-          if (mutateJsonText(parsed, newText)) {
-            params.set('variables', JSON.stringify(parsed));
-            return params.toString();
+          try {
+            const parsed = JSON.parse(raw) as unknown;
+            if (mutateJsonText(parsed, newText)) {
+              params.set('variables', JSON.stringify(parsed));
+              return params.toString();
+            }
+          } catch {
+            // not JSON in variables; fall through
           }
         }
-      } catch {
-        // give up
       }
+    } catch {
+      // not URL-encodable; fall through
     }
   }
   return body;
@@ -176,6 +181,29 @@ export const threadsAdapter: PlatformAdapter = {
     }
 
     const headers = stripVolatile(template.headers);
+    // The captured fetch headers won't include Content-Type when the page
+    // passed a typed body (URLSearchParams, FormData) — the browser fills
+    // that in automatically and it never lands in init.headers. When we
+    // replay with a string body, fetch defaults to text/plain, which
+    // Threads' edge rejects with the Instagram 404 page. Set the right
+    // Content-Type based on our content-type classification.
+    if (!hasHeader(headers, 'content-type')) {
+      if (template.contentType === 'json') {
+        headers['content-type'] = 'application/json';
+      } else if (
+        template.contentType === 'urlencoded' ||
+        template.contentType === 'unknown'
+      ) {
+        headers['content-type'] = 'application/x-www-form-urlencoded';
+      }
+    }
+    console.log('[CrossPosty] Threads adapter posting', {
+      url: template.url,
+      contentType: template.contentType,
+      headerKeys: Object.keys(headers).join(', '),
+      bodyMutated: newBody !== template.bodyText,
+      bodyChars: newBody.length,
+    });
 
     try {
       const res = await fetch(template.url, {
@@ -184,16 +212,23 @@ export const threadsAdapter: PlatformAdapter = {
         headers,
         body: newBody,
       });
+      console.log('[CrossPosty] Threads response', {
+        status: res.status,
+        ok: res.ok,
+        finalUrl: res.url,
+        contentType: res.headers.get('content-type'),
+      });
       if (!res.ok) {
         let preview = '';
         try {
-          preview = (await res.text()).slice(0, 200);
+          preview = (await res.text()).slice(0, 500);
         } catch {
           preview = '(could not read body)';
         }
+        console.warn('[CrossPosty] Threads error body', preview);
         return {
           success: false,
-          error: `Threads HTTP ${res.status}: ${preview}`,
+          error: `Threads HTTP ${res.status}: ${preview.slice(0, 200)}`,
           retryable: res.status >= 500 || res.status === 429,
         };
       }

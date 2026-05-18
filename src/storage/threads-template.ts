@@ -30,13 +30,31 @@ export function buildThreadsTemplate(
   bodyText: string,
 ): ThreadsCreatePostTemplate {
   const ct = (headers['content-type'] ?? '').toLowerCase();
-  const contentType: ThreadsCreatePostTemplate['contentType'] =
-    ct.includes('application/json')
-      ? 'json'
-      : ct.includes('application/x-www-form-urlencoded')
-        ? 'urlencoded'
-        : ct.includes('multipart/form-data')
-          ? 'multipart'
-          : 'unknown';
+  let contentType: ThreadsCreatePostTemplate['contentType'] = ct.includes(
+    'application/json',
+  )
+    ? 'json'
+    : ct.includes('application/x-www-form-urlencoded')
+      ? 'urlencoded'
+      : ct.includes('multipart/form-data')
+        ? 'multipart'
+        : 'unknown';
+  // Threads' web client sometimes captures without a content-type header set
+  // on the original request (or under a label our matcher doesn't recognise).
+  // Body-sniff so we still classify correctly: JSON starts with { or [;
+  // form bodies look like key=value(&key=value)+.
+  if (contentType === 'unknown') {
+    const trimmed = bodyText.trimStart();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        JSON.parse(bodyText);
+        contentType = 'json';
+      } catch {
+        // not JSON after all
+      }
+    } else if (/^[\w%.\-]+=[^&]*(?:&[\w%.\-]+=[^&]*)*$/.test(bodyText)) {
+      contentType = 'urlencoded';
+    }
+  }
   return { version: 1, url, headers, bodyText, contentType, capturedAt: Date.now() };
 }
