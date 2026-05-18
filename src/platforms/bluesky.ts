@@ -318,6 +318,11 @@ export const blueskyAdapter: PlatformAdapter = {
       // the refresh token expires — but atproto refresh tokens are opaque
       // and we don't know that timestamp client-side. Surface the access
       // token expiry instead so the user can see the session is healthy.
+      console.log('[CrossPosty] BSky OAuth status check starting', {
+        pdsUrl: data.pdsUrl,
+        accessTokenExp: data.expiresAt,
+        accessTokenExpired: Math.floor(Date.now() / 1000) > data.expiresAt,
+      });
       try {
         let session: AtprotoOAuthSession = data;
         const r = await pdsFetch(session, '/xrpc/com.atproto.server.getSession', {
@@ -325,6 +330,9 @@ export const blueskyAdapter: PlatformAdapter = {
         });
         session = r.session;
         await persistIfOAuthRotated(credentials, data, session);
+        console.log('[CrossPosty] BSky OAuth status check done', {
+          status: r.response.status,
+        });
         if (!r.response.ok) {
           return {
             ok: false,
@@ -339,6 +347,7 @@ export const blueskyAdapter: PlatformAdapter = {
           expiresAt: session.expiresAt,
         };
       } catch (err) {
+        console.warn('[CrossPosty] BSky OAuth status check threw', err);
         return {
           ok: false,
           severity: 'red',

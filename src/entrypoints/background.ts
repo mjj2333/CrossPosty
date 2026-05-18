@@ -111,22 +111,38 @@ export default defineBackground(() => {
 
     if (msg.type === 'GET_ACCOUNT_STATUSES') {
       const creds = await loadCredentials();
+      // Each adapter gets its own timeout. Without this, a single hung
+      // network call (e.g. an unreachable PDS for a BSky OAuth account)
+      // blocks the entire Promise.all and the popup spins forever.
+      const STATUS_TIMEOUT_MS = 10_000;
       const entries = await Promise.all(
         creds.map(async (cred): Promise<AccountStatusEntry> => {
-          try {
+          const runStatus = async (): Promise<AccountStatus> => {
             const adapter = getAdapter(cred.platformId);
-            let status: AccountStatus;
-            if (adapter.getStatus) {
-              status = await adapter.getStatus(cred);
-            } else {
-              const ok = await adapter.validateCredentials(cred);
-              status = { ok, severity: ok ? 'green' : 'red' };
-            }
+            if (adapter.getStatus) return adapter.getStatus(cred);
+            const ok = await adapter.validateCredentials(cred);
+            return { ok, severity: ok ? 'green' : 'red' };
+          };
+          try {
+            const status = await Promise.race([
+              runStatus(),
+              new Promise<AccountStatus>((_resolve, reject) =>
+                setTimeout(() => reject(new Error('status check timed out')), STATUS_TIMEOUT_MS),
+              ),
+            ]);
             return { accountId: cred.accountId, status };
           } catch (err) {
+            logger.warn('status check failed', {
+              platformId: cred.platformId,
+              error: String(err),
+            });
             return {
               accountId: cred.accountId,
-              status: { ok: false, severity: 'red', message: String(err) },
+              status: {
+                ok: false,
+                severity: 'red',
+                message: String(err).slice(0, 200),
+              },
             };
           }
         }),
