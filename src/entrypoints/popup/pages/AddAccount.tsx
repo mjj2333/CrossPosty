@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { getAdapter } from '../../../platforms';
+import type { AuthenticateResponse, Message } from '../../../lib/messaging';
 import type { PlatformId } from '../../../platforms/types';
-import { addCredential } from '../../../storage/credentials';
 
 type AddableId = PlatformId;
 
@@ -30,18 +29,26 @@ function fieldsFor(platformId: AddableId): Field[] {
           name: 'instanceUrl',
           label: 'Instance URL',
           type: 'text',
-          placeholder: 'https://mastodon.social',
-        },
-        {
-          name: 'accessToken',
-          label: 'Access token (Preferences → Development → New application)',
-          type: 'password',
+          placeholder: 'mastodon.social',
         },
       ];
     case 'linkedin':
       return [];
     case 'x':
       return [];
+  }
+}
+
+function helperFor(platformId: AddableId): string | null {
+  switch (platformId) {
+    case 'linkedin':
+      return "Make sure you're logged in at linkedin.com in this browser, then click Connect. We read your session cookies directly — they stay on this device.";
+    case 'x':
+      return "Make sure you're logged in at x.com, then click Connect. After connecting, post one tweet natively so CrossPosty can learn the current request shape — then cross-posts to X work.";
+    case 'mastodon':
+      return 'Enter your instance (e.g. mastodon.social). A login window will open — sign in once and authorize CrossPosty.';
+    case 'bluesky':
+      return null;
   }
 }
 
@@ -57,15 +64,19 @@ export function AddAccountPage({
   const [busy, setBusy] = useState(false);
 
   const fields = fieldsFor(platformId);
+  const helper = helperFor(platformId);
 
   async function submit() {
     setBusy(true);
     setError(null);
     try {
-      const adapter = getAdapter(platformId);
-      const creds = await adapter.authenticate(params);
-      await addCredential(creds);
-      onDone();
+      const req: Message = { type: 'AUTHENTICATE', payload: { platformId, params } };
+      const response = (await chrome.runtime.sendMessage(req)) as AuthenticateResponse;
+      if (response.success) {
+        onDone();
+      } else {
+        setError(response.error);
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -79,20 +90,7 @@ export function AddAccountPage({
         ← back
       </button>
       <h2 className="font-medium capitalize">Add {platformId} account</h2>
-      {platformId === 'linkedin' && (
-        <p className="text-xs text-gray-600">
-          Make sure you&apos;re logged in at linkedin.com in this browser, then click Connect. We
-          read your session cookies directly — they stay on this device.
-        </p>
-      )}
-      {platformId === 'x' && (
-        <p className="text-xs text-gray-600">
-          Make sure you&apos;re logged in at x.com in this browser, then click Connect. Posting
-          to X also needs a request template — open x.com and post one tweet natively so
-          CrossPosty can learn the current request shape; after that, cross-posts work
-          until X next rotates their endpoint.
-        </p>
-      )}
+      {helper && <p className="text-xs text-gray-600">{helper}</p>}
       {fields.map((f) => (
         <label key={f.name} className="block text-sm">
           <span className="block text-gray-700 mb-0.5">{f.label}</span>

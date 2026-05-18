@@ -1,9 +1,9 @@
 import { logger } from '../lib/logger';
-import type { CrossPostResultEntry, Message } from '../lib/messaging';
+import type { AuthenticateResponse, CrossPostResultEntry, Message } from '../lib/messaging';
 import { onMessage } from '../lib/messaging';
 import { getAdapter } from '../platforms';
 import type { PostResult } from '../platforms/types';
-import { loadCredentials } from '../storage/credentials';
+import { addCredential, loadCredentials } from '../storage/credentials';
 
 export default defineBackground(() => {
   logger.info('background loaded');
@@ -12,6 +12,21 @@ export default defineBackground(() => {
     if (msg.type === 'LIST_CREDENTIALS') {
       const creds = await loadCredentials();
       return { type: 'LIST_CREDENTIALS_RESPONSE', payload: creds };
+    }
+
+    if (msg.type === 'AUTHENTICATE') {
+      const { platformId, params } = msg.payload;
+      try {
+        const adapter = getAdapter(platformId);
+        const creds = await adapter.authenticate(params);
+        await addCredential(creds);
+        const response: AuthenticateResponse = { success: true, credentials: creds };
+        return response;
+      } catch (err) {
+        logger.warn('authenticate failed', { platformId, error: String(err) });
+        const response: AuthenticateResponse = { success: false, error: String(err) };
+        return response;
+      }
     }
 
     if (msg.type === 'CROSSPOST_REQUEST') {

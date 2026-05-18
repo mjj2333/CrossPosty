@@ -4,6 +4,23 @@
 
 The Phase 1 plan called for pnpm. Corepack on this machine couldn't install pnpm without admin rights (`EPERM` writing to `C:\Program Files\nodejs`). Substituted npm. The plan's `pnpm exec X` and `pnpm X` commands map to `npx X` and `npm run X` respectively. No functional difference for this project.
 
+## 2026-05-17 — Mastodon OAuth via dynamic app registration
+
+Phase 1 originally shipped Mastodon login as a "paste your access token" form, requiring the user to navigate to their instance's Preferences → Development → New application page. That's terrible UX. Replaced with proper OAuth 2.0:
+
+1. User enters just the instance URL (e.g. `mastodon.social`; we normalize to add `https://`).
+2. Background `POST {instance}/api/v1/apps` to register CrossPosty dynamically (Mastodon's API explicitly supports self-registration — no admin approval). Client_id/client_secret cached per instance in `chrome.storage.local["mastodonApps"]`.
+3. `chrome.identity.launchWebAuthFlow` opens the instance's authorize page; user clicks Authorize once.
+4. Mastodon redirects to `chrome.identity.getRedirectURL()` with `?code=...`; Chrome intercepts.
+5. Background `POST {instance}/oauth/token` exchanges code for access token.
+6. Verify via `accounts.verifyCredentials`, persist as credential.
+
+**Auth routing moved to background.** All `adapter.authenticate(params)` calls now happen in the service worker via the new `AUTHENTICATE` message. Popup just sends the message and waits for the response. Side benefit: removed the @atproto/api + masto deps from the popup bundle (1.32 MB → 146 kB).
+
+**Why launchWebAuthFlow from the background:** popup closes when focus moves to the OAuth window, so a popup-initiated promise would never resolve. Service worker context is stable across the auth flow.
+
+**Same OAuth pattern reusable for Threads** (Meta's Threads API also uses OAuth) when we get there — registration helper would differ (Threads doesn't allow self-registration, app must be created on developers.facebook.com) but the launchWebAuthFlow → code → token-exchange path is identical.
+
 ## 2026-05-17 — X-as-destination via template capture (option A)
 
 Phase 1 originally shipped X as source-only and deferred destination posting to Phase 2 (offscreen-doc native UI driving). After Phase 1 wrapped, the user pivoted: X is the must-have destination platform; LinkedIn and Mastodon are deprioritized.

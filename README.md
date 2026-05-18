@@ -36,9 +36,9 @@ Click the CrossPosty icon to open the popup, then choose a platform:
 - In the popup, enter your handle (e.g. `you.bsky.social`) and the app password
 
 ### Mastodon (any instance)
-- Your instance → Preferences → Development → **New application**
-- Scopes needed: `read:accounts`, `write:statuses`
-- Copy the access token into the popup, plus the instance URL (e.g. `https://mastodon.social`)
+- Click Mastodon in the popup → enter your instance URL (e.g. `mastodon.social`) → **Connect**
+- A login window opens on your instance — sign in if you aren't already, click **Authorize**
+- CrossPosty registers itself as an app on your instance the first time and caches the registration, so future logins skip straight to the authorize step
 
 ### LinkedIn
 - Make sure you're logged in at linkedin.com **in this browser**

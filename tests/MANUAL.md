@@ -15,7 +15,7 @@ Phase 1 ships without UI tests; this checklist is the gate for cutting a release
 - [ ] Open popup; empty state renders
 - [ ] Add X (logged in at x.com): click X → Connect → success, "X session" appears
 - [ ] Add BlueSky: handle + app password → success, account appears in list
-- [ ] Add Mastodon: instance URL + access token → success, account appears with `@user@instance` label
+- [ ] Add Mastodon: enter instance URL only → OAuth window opens on your instance → click Authorize → window closes → account appears with `@user@instance` label
 - [ ] Add LinkedIn (logged in at linkedin.com): click LinkedIn → Connect → success, "LinkedIn session" appears
 - [ ] Remove each account — list updates
 - [ ] Re-add all four for the next steps

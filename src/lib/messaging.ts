@@ -7,12 +7,21 @@ export type CrossPostResultEntry = {
   result: PostResult;
 };
 
+export type AuthenticateResponse =
+  | { success: true; credentials: AccountCredentials }
+  | { success: false; error: string };
+
 export type Message =
   | { type: 'CROSSPOST_REQUEST'; payload: { content: PostContent; accountIds: string[] } }
   | { type: 'CROSSPOST_RESULT'; payload: CrossPostResultEntry }
   | { type: 'LIST_CREDENTIALS'; payload: null }
   | { type: 'LIST_CREDENTIALS_RESPONSE'; payload: AccountCredentials[] }
-  | { type: 'INTERCEPTED_POST'; payload: InterceptedPost };
+  | { type: 'INTERCEPTED_POST'; payload: InterceptedPost }
+  | {
+      type: 'AUTHENTICATE';
+      payload: { platformId: PlatformId; params: Record<string, string> };
+    }
+  | { type: 'AUTHENTICATE_RESPONSE'; payload: AuthenticateResponse };
 
 export type MessageOf<T extends Message['type']> = Extract<Message, { type: T }>;
 
