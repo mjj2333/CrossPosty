@@ -31,6 +31,8 @@ export default defineConfig({
       'https://www.linkedin.com/*',
       'https://www.threads.net/*',
       'https://threads.net/*',
+      'https://www.threads.com/*',
+      'https://threads.com/*',
       'https://i.instagram.com/*',
     ],
     // Mastodon is federated — instance hostname not known until login time.

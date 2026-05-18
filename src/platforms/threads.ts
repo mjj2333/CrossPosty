@@ -9,6 +9,16 @@ import type {
   PostResult,
 } from './types';
 
+// Meta moved Threads from threads.net to threads.com in 2024; new users
+// see threads.com. We accept either as evidence of a logged-in session.
+async function readSessionCookie(): Promise<{ value: string } | null> {
+  for (const url of ['https://www.threads.com', 'https://www.threads.net']) {
+    const c = await chrome.cookies.get({ url, name: 'sessionid' });
+    if (c?.value) return { value: c.value };
+  }
+  return null;
+}
+
 type ThreadsSessionData = {
   // We don't introspect specific cookies — we just verify the user has a
   // logged-in threads.net session via the captured template's cookies.
@@ -132,10 +142,7 @@ export const threadsAdapter: PlatformAdapter = {
     // cookies — the user has either logged in to threads.net or hasn't.
     // The browser's session cookies travel with our fetch via
     // credentials: 'include' at post time.
-    const session = await chrome.cookies.get({
-      url: 'https://www.threads.net',
-      name: 'sessionid',
-    });
+    const session = await readSessionCookie();
     if (!session?.value) {
       throw new Error(
         'Threads session not found. Log in to threads.net in this browser first.',
@@ -209,10 +216,7 @@ export const threadsAdapter: PlatformAdapter = {
   },
 
   async validateCredentials(): Promise<boolean> {
-    const session = await chrome.cookies.get({
-      url: 'https://www.threads.net',
-      name: 'sessionid',
-    });
+    const session = await readSessionCookie();
     return Boolean(session?.value);
   },
 };

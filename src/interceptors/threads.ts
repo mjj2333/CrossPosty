@@ -66,15 +66,15 @@ function findTextInFormBody(body: string): string | null {
   return null;
 }
 
-// Broad URL match: any threads.net or i.instagram.com API endpoint that's a
-// POST with a body. The body-parse step filters out non-compose traffic by
-// requiring a text-shaped field.
+// Broad URL match: any threads.{net,com} or i.instagram.com API endpoint
+// that's a POST with a body. The body-parse step filters out non-compose
+// traffic by requiring a text-shaped field.
 const THREADS_COMPOSE_RE =
-  /(?:threads\.net|i\.instagram\.com)\/(?:api|graphql)/i;
+  /(?:threads\.(?:net|com)|i\.instagram\.com)\/(?:api|graphql)/i;
 
 export const threadsInterceptor: SourceInterceptor = {
   platformId: 'threads',
-  hostMatchPattern: '*://www.threads.net/*',
+  hostMatchPattern: '*://www.threads.com/*',
   install(onIntercept) {
     function handle(ev: Event) {
       const detail = (ev as CustomEvent<{ url: string; body: string }>).detail;

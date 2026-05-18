@@ -8,7 +8,12 @@ import {
 } from '../storage/threads-template';
 
 export default defineContentScript({
-  matches: ['*://www.threads.net/*', '*://threads.net/*'],
+  matches: [
+    '*://www.threads.net/*',
+    '*://threads.net/*',
+    '*://www.threads.com/*',
+    '*://threads.com/*',
+  ],
   runAt: 'document_start',
   main() {
     console.log('[CrossPosty] threads.net ISOLATED content script loaded');
