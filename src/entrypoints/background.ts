@@ -1,3 +1,4 @@
+import { installHealthCheckAlarm, runHealthCheckAndBadge, updateBadge } from '../lib/account-health';
 import { logger } from '../lib/logger';
 import { deserializeMediaAttachments } from '../lib/media-transport';
 import type {
@@ -87,6 +88,10 @@ export default defineBackground(() => {
   logger.info('background loaded');
   void installXUploadHeaderRewrite();
   void installThreadsHeaderRewrite();
+  installHealthCheckAlarm();
+  // First-pass health check shortly after SW boot so the badge reflects
+  // reality before the user even opens the popup.
+  void runHealthCheckAndBadge();
 
   onMessage(async (msg: Message) => {
     if (msg.type === 'LIST_CREDENTIALS') {
@@ -147,6 +152,18 @@ export default defineBackground(() => {
           }
         }),
       );
+      // Roll up into the badge summary so the icon stays in sync with
+      // what the popup just rendered.
+      const summary = entries.reduce(
+        (acc, e) => {
+          if (e.status.severity === 'red') acc.red++;
+          else if (e.status.severity === 'yellow') acc.yellow++;
+          else acc.green++;
+          return acc;
+        },
+        { red: 0, yellow: 0, green: 0 },
+      );
+      void updateBadge(summary);
       return { type: 'GET_ACCOUNT_STATUSES_RESPONSE', payload: entries };
     }
 

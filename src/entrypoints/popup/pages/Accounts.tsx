@@ -38,9 +38,10 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
   async function refresh() {
     const creds = await loadCredentials();
     setAccounts(creds);
-    if (creds.length > 0) {
-      void refreshStatuses();
-    }
+    // Always refresh statuses — even on an empty list, this lets the
+    // background SW clear the icon badge after the user removes their
+    // last account.
+    void refreshStatuses();
   }
 
   async function refreshStatuses() {
