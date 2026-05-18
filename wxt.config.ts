@@ -19,11 +19,7 @@ export default defineConfig({
     // Popup calls chrome.permissions.request() with the typed instance before
     // kicking off OAuth. User sees a one-time per-instance allow prompt.
     optional_host_permissions: ['https://*/*'],
-    web_accessible_resources: [
-      {
-        resources: ['/inject-fetch-hook.js'],
-        matches: ['*://x.com/*', '*://bsky.app/*'],
-      },
-    ],
+    // No web_accessible_resources needed — fetch-hook is now a MAIN-world
+    // content script declared in the manifest (see entrypoints/main-world.content.ts).
   },
 });

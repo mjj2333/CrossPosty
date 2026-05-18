@@ -5,16 +5,10 @@ export default defineContentScript({
   matches: ['*://bsky.app/*'],
   runAt: 'document_start',
   main() {
-    injectMainWorldHook();
+    console.log('[CrossPosty] bsky.app ISOLATED content script loaded');
     bskyInterceptor.install((post) => {
+      console.log('[CrossPosty] bsky interceptor fired — mounting panel');
       mountComposerPanel(post);
     });
   },
 });
-
-function injectMainWorldHook(): void {
-  const script = document.createElement('script');
-  script.src = chrome.runtime.getURL('/inject-fetch-hook.js');
-  script.onload = () => script.remove();
-  (document.head || document.documentElement).appendChild(script);
-}
