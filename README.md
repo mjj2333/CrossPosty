@@ -76,6 +76,20 @@ npm run lint       # Biome
 npm run format     # Biome format --write
 ```
 
+### Verbose debug logs
+
+Per-request diagnostic logs are gated behind a runtime flag. By default only state changes (panel mounted, INIT/APPEND/FINALIZE, errors) appear in the console. To turn on the verbose `[CrossPosty] XHR graphql-ish URL ...` and similar diagnostics:
+
+```js
+// In the x.com / bsky.app page console:
+window.__CROSSPOSTY_DEBUG = true;
+
+// In the extension background console (chrome://extensions → CrossPosty → service worker):
+__CROSSPOSTY_DEBUG = true;
+```
+
+Each JS realm is independent, so set it in whichever console you're debugging from. Set to `false` to silence again.
+
 Tests cover crypto round-trips, encrypted credential storage, and each platform adapter's post/auth/validate paths. The composer panel and content scripts are exercised manually — see [`tests/MANUAL.md`](tests/MANUAL.md).
 
 ## Status & roadmap

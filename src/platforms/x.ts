@@ -1,3 +1,4 @@
+import { debugLog } from '../lib/debug';
 import { loadXTemplate, type XCreateTweetTemplate } from '../storage/x-template';
 import type {
   AccountCredentials,
@@ -329,12 +330,12 @@ export const xAdapter: PlatformAdapter = {
       'x-csrf-token': ct0,
     };
 
-    // Diagnostic: log the body shape we are sending. Helps debug when X
-    // rejects a media-attached tweet silently (tweet_results: {} response).
+    // Diagnostic: log the body shape we are sending. Gated to debug since
+    // it's verbose. Helps debug if X starts rejecting media-attached tweets.
     try {
       const bodyForLog = body as { variables?: Record<string, unknown> } | null;
       const v = bodyForLog?.variables ?? {};
-      console.log('[CrossPosty] X CreateTweet body', {
+      debugLog('[CrossPosty] X CreateTweet body', {
         tweet_text: (v as { tweet_text?: string }).tweet_text,
         media: (v as { media?: unknown }).media,
         topLevelKeys: bodyForLog ? Object.keys(bodyForLog) : null,

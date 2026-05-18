@@ -17,6 +17,8 @@
 //      request fires referencing those IDs, we can resurrect the bytes and
 //      forward them to other destinations.
 
+import { debugLog } from '../lib/debug';
+
 export default defineContentScript({
   matches: ['*://x.com/*', '*://twitter.com/*', '*://bsky.app/*'],
   runAt: 'document_start',
@@ -112,7 +114,7 @@ export default defineContentScript({
           // Diagnostic: log all upload-host hits so we can see what URL X
           // is actually using if our specific capture path doesn't fire.
           if (X_UPLOAD_HOST_LOG_RE.test(url)) {
-            console.log('[CrossPosty] fetch upload-host URL', url, {
+            debugLog('[CrossPosty] fetch upload-host URL', url, {
               method: init?.method ?? 'GET',
               hasInit: !!init,
               hasInitBody: !!init?.body,
@@ -135,7 +137,7 @@ export default defineContentScript({
           }
 
           if (isGraphqlish(url)) {
-            console.log('[CrossPosty] fetch graphql-ish URL', url);
+            debugLog('[CrossPosty] fetch graphql-ish URL', url);
           }
           if (isInteresting(url)) {
             const bodyText = await readFetchBody(input, init);
@@ -409,7 +411,7 @@ export default defineContentScript({
         // Diagnostic: log XHRs to any upload host (URL + body type) so we
         // can see how X is uploading when capture misses.
         if (X_UPLOAD_HOST_LOG_RE.test(url)) {
-          console.log('[CrossPosty] XHR upload-host URL', url, {
+          debugLog('[CrossPosty] XHR upload-host URL', url, {
             method: t.__crossposty_method,
             bodyType:
               body == null
@@ -422,12 +424,12 @@ export default defineContentScript({
 
         if (X_MEDIA_UPLOAD_RE.test(url)) {
           if (body instanceof FormData) {
-            console.log('[CrossPosty] X XHR media tap firing (FormData)', url);
+            debugLog('[CrossPosty] X XHR media tap firing (FormData)', url);
             captureXAppendFromFormData(body, url);
           } else {
             // INIT and FINALIZE come through here with null body — that's fine,
             // we don't need to capture them. APPEND should always be FormData.
-            console.log('[CrossPosty] X XHR upload command (non-FormData, ignored)', url);
+            debugLog('[CrossPosty] X XHR upload command (non-FormData, ignored)', url);
           }
           return origSend.call(this, body);
         }
@@ -437,7 +439,7 @@ export default defineContentScript({
 
         try {
           if (isGraphqlish(url)) {
-            console.log('[CrossPosty] XHR graphql-ish URL', url, t.__crossposty_method);
+            debugLog('[CrossPosty] XHR graphql-ish URL', url, t.__crossposty_method);
           }
           if (isInteresting(url) && body) {
             let bodyText = '';
