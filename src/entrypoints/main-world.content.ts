@@ -40,6 +40,16 @@ export default defineContentScript({
     patchFetch();
     patchXHR();
 
+    function toAbsoluteUrl(url: string): string {
+      // Already absolute? Pass through.
+      if (/^https?:\/\//i.test(url)) return url;
+      try {
+        return new URL(url, location.href).href;
+      } catch {
+        return url;
+      }
+    }
+
     // ---- URL matchers ----------------------------------------------------
 
     function isInteresting(url: string): boolean {
@@ -115,12 +125,16 @@ export default defineContentScript({
       const origFetch = window.fetch.bind(window);
       window.fetch = async function (input, init) {
         try {
-          const url =
+          // Meta's threads.com bundle calls fetch('/graphql/query', ...)
+          // with a relative URL. Resolve to absolute so our host-based
+          // regexes can match. Request and URL inputs are already absolute.
+          const rawUrl =
             typeof input === 'string'
               ? input
               : input instanceof URL
                 ? input.toString()
                 : (input as Request).url;
+          const url = toAbsoluteUrl(rawUrl);
 
           if (CDN_BYPASS_RE.test(url)) return origFetch(input, init);
 
@@ -402,7 +416,7 @@ export default defineContentScript({
         const method = args[0];
         const url = args[1];
         if (typeof method === 'string') t.__crossposty_method = method;
-        if (typeof url === 'string') t.__crossposty_url = url;
+        if (typeof url === 'string') t.__crossposty_url = toAbsoluteUrl(url);
         else if (url instanceof URL) t.__crossposty_url = url.toString();
         t.__crossposty_headers = {};
         return (origOpen as (...a: unknown[]) => void).apply(this, args);
