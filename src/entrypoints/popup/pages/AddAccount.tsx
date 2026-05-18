@@ -70,8 +70,39 @@ export function AddAccountPage({
     setBusy(true);
     setError(null);
     try {
+      // Federated platforms (Mastodon) need host permission granted at runtime
+      // for whatever instance the user typed — we can't list every server in
+      // host_permissions upfront. Chrome will show a one-time allow prompt
+      // per instance.
+      if (platformId === 'mastodon') {
+        const raw = (params.instanceUrl ?? '').trim();
+        const normalized = /^https?:\/\//.test(raw) ? raw : `https://${raw}`;
+        try {
+          const url = new URL(normalized);
+          const granted = await chrome.permissions.request({
+            origins: [`${url.origin}/*`],
+          });
+          if (!granted) {
+            setError(`Permission to access ${url.host} was denied. Try again and click Allow.`);
+            return;
+          }
+        } catch {
+          setError('That instance URL looks invalid. Try just "mastodon.social" (no http).');
+          return;
+        }
+      }
+
       const req: Message = { type: 'AUTHENTICATE', payload: { platformId, params } };
-      const response = (await chrome.runtime.sendMessage(req)) as AuthenticateResponse;
+      const response = (await chrome.runtime.sendMessage(req)) as
+        | AuthenticateResponse
+        | null
+        | undefined;
+      if (!response) {
+        setError(
+          'No response from background. Reload the extension at chrome://extensions (click the 🔄 icon on the CrossPosty card) and try again.',
+        );
+        return;
+      }
       if (response.success) {
         onDone();
       } else {
