@@ -43,7 +43,7 @@ export function ComposerPanel({
         payload: AccountCredentials[];
       };
       const destinations = response.payload.filter(
-        (c) => c.platformId !== intercepted.sourcePlatformId && c.platformId !== 'x',
+        (c) => c.platformId !== intercepted.sourcePlatformId,
       );
       setVariants(
         destinations.map((account) => ({ account, text: intercepted.text, enabled: true })),

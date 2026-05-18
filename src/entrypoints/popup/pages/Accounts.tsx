@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AccountCredentials, PlatformId } from '../../../platforms/types';
 import { deleteCredential, loadCredentials } from '../../../storage/credentials';
 
-type AddableId = Exclude<PlatformId, 'x'>;
+type AddableId = PlatformId;
 
 export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void }) {
   const [accounts, setAccounts] = useState<AccountCredentials[]>([]);
@@ -50,7 +50,14 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
       </section>
       <section>
         <h2 className="font-medium mb-2">Add account</h2>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onAdd('x')}
+            className="bg-black hover:bg-gray-800 text-white px-3 py-1 rounded text-sm"
+          >
+            X
+          </button>
           <button
             type="button"
             onClick={() => onAdd('bluesky')}

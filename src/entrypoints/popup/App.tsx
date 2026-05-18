@@ -3,7 +3,7 @@ import type { PlatformId } from '../../platforms/types';
 import { AccountsPage } from './pages/Accounts';
 import { AddAccountPage } from './pages/AddAccount';
 
-type AddableId = Exclude<PlatformId, 'x'>;
+type AddableId = PlatformId;
 
 export type View = { name: 'accounts' } | { name: 'add'; platformId: AddableId };
 

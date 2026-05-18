@@ -8,7 +8,7 @@ Credentials live encrypted in `chrome.storage.local`. They never leave your brow
 
 - Compose on **X** or **BlueSky** as usual — the original post still fires natively (no API engagement penalty)
 - Composer panel pops up after each post with per-platform variants
-- Cross-post to **BlueSky**, **Mastodon** (any instance), and **LinkedIn**
+- Cross-post to **X**, **BlueSky**, **Mastodon** (any instance), and **LinkedIn**
 - Each variant is independently editable, with live character-count and per-platform limits
 - Per-platform success/failure shown inline — one platform failing won't block the others
 - All credentials encrypted at rest with AES-GCM (WebCrypto), device-local key
@@ -24,6 +24,12 @@ Phase 1 is not yet on the Chrome Web Store. To try it:
 ## Connecting accounts
 
 Click the CrossPosty icon to open the popup, then choose a platform:
+
+### X
+- Make sure you're logged in at x.com **in this browser**
+- Click X in the popup → Connect. We read your session cookies (`auth_token`, `ct0`) directly.
+- **Important:** post one tweet natively on x.com *after* installing CrossPosty. Our fetch hook captures the request shape from that post and uses it as a template for cross-posts. Without it, X cross-posts return "post natively once first." The template self-refreshes every time you post natively, so it survives X's periodic endpoint rotations.
+- See `NOTES.md` for the gnarly details (volatile headers, throttling caveats).
 
 ### BlueSky
 - BlueSky → Settings → **App Passwords** → create one
@@ -74,12 +80,13 @@ Tests cover crypto round-trips, encrypted credential storage, and each platform 
 
 ## Status & roadmap
 
-**Phase 1 (in progress):** scaffold + 3 destinations (BlueSky, Mastodon, LinkedIn) + 2 sources (X, BlueSky).
+**Phase 1 (in progress):** scaffold + 4 destinations (X, BlueSky, Mastodon, LinkedIn) + 2 sources (X, BlueSky). X destination uses session-cookie POST to X's internal GraphQL with template auto-captured from your native posts — see `NOTES.md` for the trade-offs.
 
 **Not yet in Phase 1:**
 - Image / media cross-posting (intercepted but not yet forwarded)
-- X-as-destination (Phase 2 — needs scheduled web-UI posting via offscreen documents)
-- Threads, Reddit, Substack Notes (Phase 2/3)
+- Threads, Substack Notes (next up)
+- X-as-destination via offscreen UI driving (deferred — fall back from session-cookie POST if X turns out to throttle it)
+- Reddit (Phase 2/3)
 - Scheduling, reply inbox, analytics (Phase 2/3)
 - Firefox / Safari / mobile (Phase 4)
 

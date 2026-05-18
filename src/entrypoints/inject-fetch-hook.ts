@@ -27,8 +27,11 @@ export default defineUnlistedScript(() => {
         let bodyText = '';
         if (typeof init.body === 'string') bodyText = init.body;
         else if (init.body instanceof Blob) bodyText = await init.body.text();
+        const headers = normalizeHeaders(init.headers);
         window.dispatchEvent(
-          new CustomEvent('crossposty:intercept', { detail: { url, body: bodyText } }),
+          new CustomEvent('crossposty:intercept', {
+            detail: { url, body: bodyText, headers },
+          }),
         );
       }
     } catch {
@@ -36,4 +39,23 @@ export default defineUnlistedScript(() => {
     }
     return origFetch(input, init);
   };
+
+  function normalizeHeaders(h: HeadersInit | undefined): Record<string, string> {
+    if (!h) return {};
+    if (h instanceof Headers) {
+      const out: Record<string, string> = {};
+      h.forEach((value, key) => {
+        out[key.toLowerCase()] = value;
+      });
+      return out;
+    }
+    if (Array.isArray(h)) {
+      const out: Record<string, string> = {};
+      for (const [k, v] of h) out[k.toLowerCase()] = v;
+      return out;
+    }
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(h)) out[k.toLowerCase()] = String(v);
+    return out;
+  }
 });

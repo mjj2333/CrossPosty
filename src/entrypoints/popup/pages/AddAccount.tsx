@@ -3,7 +3,7 @@ import { getAdapter } from '../../../platforms';
 import type { PlatformId } from '../../../platforms/types';
 import { addCredential } from '../../../storage/credentials';
 
-type AddableId = Exclude<PlatformId, 'x'>;
+type AddableId = PlatformId;
 
 type Field = { name: string; label: string; type: 'text' | 'password'; placeholder?: string };
 
@@ -39,6 +39,8 @@ function fieldsFor(platformId: AddableId): Field[] {
         },
       ];
     case 'linkedin':
+      return [];
+    case 'x':
       return [];
   }
 }
@@ -81,6 +83,14 @@ export function AddAccountPage({
         <p className="text-xs text-gray-600">
           Make sure you&apos;re logged in at linkedin.com in this browser, then click Connect. We
           read your session cookies directly — they stay on this device.
+        </p>
+      )}
+      {platformId === 'x' && (
+        <p className="text-xs text-gray-600">
+          Make sure you&apos;re logged in at x.com in this browser, then click Connect. Posting
+          to X also needs a request template — open x.com and post one tweet natively so
+          CrossPosty can learn the current request shape; after that, cross-posts work
+          until X next rotates their endpoint.
         </p>
       )}
       {fields.map((f) => (
