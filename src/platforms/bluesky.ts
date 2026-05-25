@@ -5,6 +5,8 @@ import {
   type AtprotoOAuthSession,
 } from '../lib/atproto-oauth/flow';
 import { updateCredential } from '../storage/credentials';
+import { splitIntoChain } from '../lib/thread-split';
+import { buildBskyFacets } from './bluesky-facets';
 import type {
   AccountCredentials,
   MediaAttachment,
@@ -15,6 +17,9 @@ import type {
 
 // BlueSky enforces a max of 4 images per post and ~1MB per image.
 const MAX_IMAGES = 4;
+// Shared between the adapter declaration and the chain splitter so we
+// don't drift if the platform raises the limit.
+const BSKY_CHAR_LIMIT = 300;
 
 // Stored session shapes. The two auth paths produce different credential
 // blobs; we use a discriminator field. Records created before authType
@@ -157,10 +162,15 @@ async function uploadBlobOAuth(
   session: AtprotoOAuthSession,
   attachment: MediaAttachment,
 ): Promise<{ blob: BlobRef; session: AtprotoOAuthSession }> {
+  // BSky enforces a hard 2,000,000-byte cap on blob uploads. Modern
+  // phone cameras easily produce 4-8MB JPEGs. Compress in-process
+  // before the upload so the user gets the image through instead of
+  // a cryptic 400 from the PDS.
+  const ready = await compressForBsky(attachment);
   const result = await pdsFetch(session, '/xrpc/com.atproto.repo.uploadBlob', {
     method: 'POST',
-    body: await attachment.blob.arrayBuffer(),
-    contentType: attachment.mimeType,
+    body: await ready.blob.arrayBuffer(),
+    contentType: ready.mimeType,
   });
   if (!result.response.ok) {
     const txt = await result.response.text();
@@ -168,6 +178,58 @@ async function uploadBlobOAuth(
   }
   const json = (await result.response.json()) as { blob: BlobRef };
   return { blob: json.blob, session: result.session };
+}
+
+// Compress an image to fit under BSky's 2MB blob ceiling. Skip if the
+// blob already fits. Otherwise: decode -> downscale longest edge to
+// 2048px -> re-encode as JPEG with a quality search loop. createImage
+// Bitmap + OffscreenCanvas are both available in MV3 service workers
+// on Chrome.
+const BSKY_BLOB_CAP = 2_000_000;
+const BSKY_BLOB_TARGET = 1_800_000; // safety margin under the cap
+const MAX_DIM = 2048;
+
+async function compressForBsky(attachment: MediaAttachment): Promise<MediaAttachment> {
+  if (attachment.blob.size <= BSKY_BLOB_CAP) return attachment;
+  if (!attachment.mimeType.startsWith('image/')) return attachment;
+  try {
+    const bitmap = await createImageBitmap(attachment.blob);
+    let { width, height } = bitmap;
+    if (width > MAX_DIM || height > MAX_DIM) {
+      const scale = MAX_DIM / Math.max(width, height);
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
+    }
+    let quality = 0.85;
+    let out: Blob | null = null;
+    while (quality >= 0.4) {
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) break;
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      out = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+      if (out.size <= BSKY_BLOB_TARGET) break;
+      quality -= 0.1;
+    }
+    bitmap.close();
+    if (!out || out.size > BSKY_BLOB_CAP) {
+      console.warn('[CrossPosty] BSky compression could not fit under 2MB', {
+        originalSize: attachment.blob.size,
+        finalSize: out?.size,
+      });
+      return attachment;
+    }
+    console.log('[CrossPosty] BSky image compressed', {
+      original: attachment.blob.size,
+      compressed: out.size,
+      qualityUsed: quality,
+      dimensions: `${width}x${height}`,
+    });
+    return { blob: out, mimeType: 'image/jpeg', alt: attachment.alt };
+  } catch (err) {
+    console.warn('[CrossPosty] BSky compression failed, uploading original', err);
+    return attachment;
+  }
 }
 
 async function postOAuth(
@@ -191,41 +253,94 @@ async function postOAuth(
       uploaded.push({ alt: m.alt ?? '', image: out.blob });
     }
 
-    const record: Record<string, unknown> = {
-      $type: 'app.bsky.feed.post',
-      text: content.text,
-      createdAt: new Date().toISOString(),
-    };
-    if (uploaded.length > 0) {
-      record.embed = { $type: 'app.bsky.embed.images', images: uploaded };
+    // Chain long posts. Single-post case yields a one-element array
+    // and behaves identically to the pre-chain code path. Images go
+    // on the head post only (standard thread shape).
+    const chunks = splitIntoChain(content.text, BSKY_CHAR_LIMIT);
+
+    let firstUri: string | undefined;
+    let firstUrl: string | undefined;
+    let rootRef: { uri: string; cid: string } | undefined;
+    let parentRef: { uri: string; cid: string } | undefined;
+    let chainError: { message: string; afterChunk: number } | null = null;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkText = chunks[i] ?? '';
+      const facetResult = await buildBskyFacets(chunkText, session);
+      session = facetResult.session;
+
+      const record: Record<string, unknown> = {
+        $type: 'app.bsky.feed.post',
+        text: chunkText,
+        createdAt: new Date().toISOString(),
+      };
+      if (facetResult.facets.length > 0) {
+        record.facets = facetResult.facets;
+      }
+      if (i === 0 && uploaded.length > 0) {
+        record.embed = { $type: 'app.bsky.embed.images', images: uploaded };
+      }
+      if (rootRef && parentRef) {
+        record.reply = { root: rootRef, parent: parentRef };
+      }
+      const createRecordBody = {
+        repo: session.did,
+        collection: 'app.bsky.feed.post',
+        record,
+      };
+
+      // Brief pacing between chain chunks. BSky is more permissive
+      // than X/Meta about bursts, but the PDS also rate-limits and
+      // a couple seconds between requests keeps us comfortably under
+      // any per-IP throttle.
+      if (i > 0) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+
+      const result = await pdsFetch(session, '/xrpc/com.atproto.repo.createRecord', {
+        method: 'POST',
+        body: JSON.stringify(createRecordBody),
+        contentType: 'application/json',
+      });
+      session = result.session;
+      if (!result.response.ok) {
+        const txt = await result.response.text();
+        chainError = {
+          message: `createRecord HTTP ${result.response.status}: ${txt.slice(0, 200)}`,
+          afterChunk: i,
+        };
+        break;
+      }
+      const json = (await result.response.json()) as { uri: string; cid: string };
+      if (i === 0) {
+        firstUri = json.uri;
+        const rkey = json.uri.split('/').pop() ?? '';
+        firstUrl = `https://bsky.app/profile/${session.handle}/post/${rkey}`;
+        rootRef = { uri: json.uri, cid: json.cid };
+      }
+      parentRef = { uri: json.uri, cid: json.cid };
     }
-    const createRecordBody = {
-      repo: session.did,
-      collection: 'app.bsky.feed.post',
-      record,
-    };
-    const result = await pdsFetch(session, '/xrpc/com.atproto.repo.createRecord', {
-      method: 'POST',
-      body: JSON.stringify(createRecordBody),
-      contentType: 'application/json',
-    });
-    session = result.session;
-    if (!result.response.ok) {
-      const txt = await result.response.text();
-      await persistIfOAuthRotated(credentials, initial, session);
+
+    await persistIfOAuthRotated(credentials, initial, session);
+
+    if (chainError && chainError.afterChunk === 0) {
       return {
         success: false,
-        error: `createRecord HTTP ${result.response.status}: ${txt.slice(0, 200)}`,
-        retryable: result.response.status >= 500,
+        error: chainError.message,
+        retryable: false,
       };
     }
-    const json = (await result.response.json()) as { uri: string; cid: string };
-    await persistIfOAuthRotated(credentials, initial, session);
-    const rkey = json.uri.split('/').pop() ?? '';
+    if (chainError) {
+      console.warn('[CrossPosty] BSky chain partial', {
+        posted: chainError.afterChunk,
+        of: chunks.length,
+        error: chainError.message,
+      });
+    }
     return {
       success: true,
-      url: `https://bsky.app/profile/${session.handle}/post/${rkey}`,
-      remoteId: json.uri,
+      url: firstUrl ?? `https://bsky.app/profile/${session.handle}`,
+      remoteId: firstUri ?? '',
     };
   } catch (err) {
     return { success: false, error: String(err), retryable: true };
@@ -237,7 +352,7 @@ async function postOAuth(
 export const blueskyAdapter: PlatformAdapter = {
   id: 'bluesky',
   displayName: 'BlueSky',
-  characterLimit: 300,
+  characterLimit: BSKY_CHAR_LIMIT,
   mediaSupport: {
     maxImages: 4,
     maxVideoSeconds: 0,

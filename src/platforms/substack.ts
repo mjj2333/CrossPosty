@@ -46,6 +46,40 @@ async function readSessionCookie(): Promise<chrome.cookies.Cookie | null> {
   return c ?? null;
 }
 
+// Live auth probe. Cookie-existence alone isn't proof the session is good —
+// Substack can invalidate server-side (logout-elsewhere, expiry) while the
+// cookie still sits in Chrome's store. We hit a known auth-required endpoint
+// and read the response:
+//   200 JSON  -> live
+//   401/403   -> invalidated server-side; treat as logged-out
+//   other     -> network blip / endpoint moved; don't flip the user red on
+//                this, let other signals (cookie presence + expiry) decide.
+async function probeSubstackSession(): Promise<'live' | 'invalid' | 'unknown'> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch('https://substack.com/api/v1/subscriptions', {
+      method: 'GET',
+      credentials: 'include',
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (res.status === 401 || res.status === 403) return 'invalid';
+    if (res.status === 200) {
+      // Some Substack endpoints respond 200 with an HTML login page for
+      // unauthenticated requests instead of a JSON 401. Require a JSON
+      // content-type to count as actually-authenticated.
+      const ct = res.headers.get('content-type') ?? '';
+      return ct.toLowerCase().includes('json') ? 'live' : 'invalid';
+    }
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Rebuild the Tiptap document for the cross-post. We replace the whole
 // `bodyJson` rather than mutating the captured tree — paragraph-per-line
 // split lets multi-line cross-posts render as multiple paragraphs.
@@ -316,6 +350,27 @@ export const substackAdapter: PlatformAdapter = {
       };
     }
     const expiresAt = cookie.expirationDate;
+    // Chrome can hold a cookie past its expirationDate before garbage-
+    // collecting it. Treat that as logged-out.
+    if (expiresAt && expiresAt * 1000 < Date.now()) {
+      return {
+        ok: false,
+        severity: 'red',
+        message: 'Substack session expired. Log in at substack.com.',
+        expiresAt,
+      };
+    }
+    // Cookie is present and not expired — but Substack may have invalidated
+    // it server-side. Probe an auth-required endpoint to find out.
+    const probe = await probeSubstackSession();
+    if (probe === 'invalid') {
+      return {
+        ok: false,
+        severity: 'red',
+        message: 'Substack session invalidated server-side. Log in at substack.com.',
+        expiresAt,
+      };
+    }
     const template = await loadSubstackTemplate();
     if (!template) {
       return {

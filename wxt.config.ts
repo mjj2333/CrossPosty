@@ -25,6 +25,7 @@ export default defineConfig({
       'alarms',
       'offscreen',
       'declarativeNetRequest',
+      'notifications',
     ],
     host_permissions: [
       'https://x.com/*',
@@ -44,6 +45,9 @@ export default defineConfig({
       'https://i.instagram.com/*',
       'https://substack.com/*',
       'https://*.substack.com/*',
+      // Phone-to-extension relay (E2EE Supabase queue). Subdomain wildcard
+      // because each Supabase project lives at a unique project-ref subdomain.
+      'https://*.supabase.co/*',
     ],
     // Mastodon is federated — instance hostname not known until login time.
     // Popup calls chrome.permissions.request() with the typed instance before

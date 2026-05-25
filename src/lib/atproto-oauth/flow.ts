@@ -61,8 +61,10 @@ async function dpopFetch(args: {
   body?: string;
   contentType?: string;
   nonce?: string;
+  // Internal: set on the recursive call so we never loop forever.
+  _retried?: boolean;
 }): Promise<Response> {
-  const { url, method, dpopKey, accessToken, body, contentType, nonce } = args;
+  const { url, method, dpopKey, accessToken, body, contentType, nonce, _retried } = args;
   const claims = {
     htm: method,
     htu: url,
@@ -74,10 +76,15 @@ async function dpopFetch(args: {
   if (contentType) headers['content-type'] = contentType;
   if (accessToken) headers.Authorization = `DPoP ${accessToken}`;
   const resp = await fetch(url, { method, headers, body });
-  if (!nonce && (resp.status === 400 || resp.status === 401)) {
+  // Retry on DPoP nonce mismatch — happens even when we DID pass a
+  // nonce, because each server (PDS vs auth server) keeps its own
+  // nonce stream and our caller may pass a stale one (e.g. refresh
+  // uses the PDS nonce against the auth server). Single retry; if it
+  // still fails after that, surface the error to the caller.
+  if (!_retried && (resp.status === 400 || resp.status === 401)) {
     const serverNonce = resp.headers.get('DPoP-Nonce');
-    if (serverNonce) {
-      return dpopFetch({ ...args, nonce: serverNonce });
+    if (serverNonce && serverNonce !== nonce) {
+      return dpopFetch({ ...args, nonce: serverNonce, _retried: true });
     }
   }
   return resp;

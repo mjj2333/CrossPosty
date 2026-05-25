@@ -1,4 +1,11 @@
 import { debugLog } from '../lib/debug';
+import { splitIntoChain } from '../lib/thread-split';
+import {
+  checkGuard,
+  formatGuardError,
+  pauseAccount,
+  recordAttempt,
+} from '../storage/platform-guard';
 import { loadXTemplate, type XCreateTweetTemplate } from '../storage/x-template';
 import type {
   AccountCredentials,
@@ -12,6 +19,11 @@ type XSessionData = {
   ct0: string;
   screenName?: string;
 };
+
+// Single source of truth for the X character limit. The adapter's
+// `characterLimit` field below references it; the chain splitter
+// uses it to decide chunk boundaries.
+const X_CHAR_LIMIT = 280;
 
 // Headers we strip from the template - these are computed per-request and X
 // either auto-generates them or doesn't care. Keeping them stale causes 4xx.
@@ -31,9 +43,16 @@ function stripVolatile(headers: Record<string, string>): Record<string, string> 
   return out;
 }
 
-function mutateTweetText(bodyJson: unknown, text: string, newMediaIds: string[]): unknown {
+function mutateTweetText(
+  bodyJson: unknown,
+  text: string,
+  newMediaIds: string[],
+  inReplyToTweetId?: string,
+): unknown {
   if (typeof bodyJson !== 'object' || bodyJson === null) return bodyJson;
-  const root = bodyJson as Record<string, unknown>;
+  // Deep clone the template body so chained calls don't mutate each
+  // other's state — the template object is shared across the chain.
+  const root = JSON.parse(JSON.stringify(bodyJson)) as Record<string, unknown>;
   const variables = root.variables;
   if (typeof variables === 'object' && variables !== null) {
     const v = variables as Record<string, unknown>;
@@ -41,6 +60,14 @@ function mutateTweetText(bodyJson: unknown, text: string, newMediaIds: string[])
     // Posting fresh content - drop any reply/quote linkage from the template.
     delete v.reply;
     delete v.quote_tweet_id;
+    // For chain continuations, re-attach a reply pointer to the prior
+    // tweet so X threads them together visually.
+    if (inReplyToTweetId) {
+      v.reply = {
+        in_reply_to_tweet_id: inReplyToTweetId,
+        exclude_reply_user_ids: [],
+      };
+    }
     // Replace captured media references with the fresh IDs we just uploaded
     // (or clear entirely if no media).
     if (newMediaIds.length > 0) {
@@ -264,7 +291,7 @@ function extractTweetId(json: unknown): string {
 export const xAdapter: PlatformAdapter = {
   id: 'x',
   displayName: 'X',
-  characterLimit: 280,
+  characterLimit: X_CHAR_LIMIT,
   mediaSupport: {
     maxImages: 4,
     maxVideoSeconds: 140,
@@ -286,6 +313,18 @@ export const xAdapter: PlatformAdapter = {
   },
 
   async post(content: PostContent, _credentials: AccountCredentials): Promise<PostResult> {
+    // Refuse early if this account is rate-limited or paused after a
+    // recent automation flag (X code 226). Same rationale as Threads
+    // guard: hammering a flagged account is how it escalates to a
+    // permanent suspension.
+    const guard = await checkGuard('x', _credentials.accountId);
+    if (!guard.ok) {
+      return {
+        success: false,
+        error: formatGuardError('x', guard),
+        retryable: false,
+      };
+    }
     const template: XCreateTweetTemplate | null = await loadXTemplate();
     if (!template) {
       return {
@@ -323,56 +362,108 @@ export const xAdapter: PlatformAdapter = {
       };
     }
 
-    const body = mutateTweetText(template.bodyJson, content.text, newMediaIds);
     const headers: Record<string, string> = {
       ...stripVolatile(template.headers),
       'content-type': 'application/json',
       'x-csrf-token': ct0,
     };
 
-    // Diagnostic: log the body shape we are sending. Gated to debug since
-    // it's verbose. Helps debug if X starts rejecting media-attached tweets.
-    try {
-      const bodyForLog = body as { variables?: Record<string, unknown> } | null;
-      const v = bodyForLog?.variables ?? {};
-      debugLog('[CrossPosty] X CreateTweet body', {
-        tweet_text: (v as { tweet_text?: string }).tweet_text,
-        media: (v as { media?: unknown }).media,
-        topLevelKeys: bodyForLog ? Object.keys(bodyForLog) : null,
-        variableKeys: Object.keys(v),
-      });
-    } catch {
-      // never block on logging
-    }
+    // Chain long posts. Single-post case yields a one-element array
+    // and behaves exactly as before. Images attach to the head tweet
+    // only — typical thread shape (image on the hook, text replies
+    // after).
+    const chunks = splitIntoChain(content.text, X_CHAR_LIMIT);
+    const cred = _credentials.data as unknown as XSessionData;
+    const screen = cred.screenName ?? 'i';
 
-    try {
-      const res = await fetch(template.url, {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify(body),
-      });
+    // Record ONCE per chain (not per chunk). Treat the whole thread
+    // as one user-intent post for rate-limit purposes; the per-chunk
+    // pacing handles burst-detection separately.
+    await recordAttempt(_credentials.accountId);
+
+    let firstRestId: string | undefined;
+    let prevTweetId: string | undefined;
+    let chainError: { message: string; afterChunk: number } | null = null;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkText = chunks[i] ?? '';
+      const mediaForThisChunk = i === 0 ? newMediaIds : [];
+      const body = mutateTweetText(template.bodyJson, chunkText, mediaForThisChunk, prevTweetId);
+
+      try {
+        const bodyForLog = body as { variables?: Record<string, unknown> } | null;
+        const v = bodyForLog?.variables ?? {};
+        debugLog('[CrossPosty] X CreateTweet body', {
+          chunk: `${i + 1}/${chunks.length}`,
+          tweet_text: (v as { tweet_text?: string }).tweet_text,
+          inReplyTo: prevTweetId,
+        });
+      } catch {
+        // never block on logging
+      }
+
+      // Pace between chain chunks: bursting the API is exactly the
+      // signal X's anti-automation looks for. 2s spread per chunk is
+      // a cheap-enough delay that users barely notice but breaks the
+      // burst pattern.
+      if (i > 0) {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+
+      let res: Response;
+      try {
+        res = await fetch(template.url, {
+          method: 'POST',
+          credentials: 'include',
+          headers,
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        chainError = { message: String(err), afterChunk: i };
+        break;
+      }
       if (!res.ok) {
-        return {
-          success: false,
-          error: `HTTP ${res.status}`,
-          retryable: res.status >= 500 || res.status === 429,
-        };
+        chainError = { message: `HTTP ${res.status}`, afterChunk: i };
+        break;
       }
       const json = (await res.json()) as unknown;
 
-      // X sometimes returns 200 with an errors[] field instead of a real
-      // tweet (e.g. content policy, duplicate, soft block). Surface those.
       const errorMessage = extractXErrorMessage(json);
       if (errorMessage) {
-        console.warn('[CrossPosty] X CreateTweet 2xx but errors[] present', errorMessage);
-        return { success: false, error: `X rejected post: ${errorMessage}`, retryable: false };
+        console.warn('[CrossPosty] X CreateTweet 2xx but errors[] present', {
+          chunk: `${i + 1}/${chunks.length}`,
+          errorMessage,
+        });
+        if (/\bcode\s+226\b/.test(errorMessage) || /automated/i.test(errorMessage)) {
+          await pauseAccount(_credentials.accountId, {
+            reason: `X anti-automation: ${errorMessage.slice(0, 150)}`,
+          });
+          chainError = {
+            message: 'X flagged this request as automated and paused the account for 24h. Browse / post natively on x.com, then unpause from the popup.',
+            afterChunk: i,
+          };
+          break;
+        }
+        // Code 344 = "daily Tweet limit reached." Healthy accounts get
+        // thousands/day; flagged accounts get cut to single digits.
+        // Pause locally for 24h so we don't keep poking the cap on
+        // every attempt. The pause aligns with the cap's natural reset.
+        if (/\bcode\s+344\b/.test(errorMessage) || /daily limit/i.test(errorMessage)) {
+          await pauseAccount(_credentials.accountId, {
+            reason: `X daily limit: ${errorMessage.slice(0, 150)}`,
+          });
+          chainError = {
+            message: 'X says this account hit its daily post limit and paused for 24h. Note: limits are quietly lowered for accounts X considers risky — if this trips again immediately tomorrow, browse natively for a few days to rebuild trust.',
+            afterChunk: i,
+          };
+          break;
+        }
+        chainError = { message: `X rejected: ${errorMessage}`, afterChunk: i };
+        break;
       }
 
       const restId = extractTweetId(json);
       if (!restId) {
-        // 2xx, no errors[], but we still couldn't find an ID. Log a preview
-        // of the response so we can fix the extractor.
         let preview = '';
         try {
           preview = JSON.stringify(json).slice(0, 500);
@@ -380,21 +471,37 @@ export const xAdapter: PlatformAdapter = {
           preview = '(unserializable)';
         }
         console.warn('[CrossPosty] X post 2xx but no rest_id extracted', {
-          topLevelKeys:
-            typeof json === 'object' && json !== null ? Object.keys(json) : null,
+          chunk: `${i + 1}/${chunks.length}`,
           preview,
         });
       }
-      const cred = _credentials.data as unknown as XSessionData;
-      const screen = cred.screenName ?? 'i';
-      return {
-        success: true,
-        url: restId ? `https://x.com/${screen}/status/${restId}` : 'https://x.com/',
-        remoteId: restId,
-      };
-    } catch (err) {
-      return { success: false, error: String(err), retryable: true };
+      if (i === 0) firstRestId = restId;
+      prevTweetId = restId;
     }
+
+    if (chainError && chainError.afterChunk === 0) {
+      // Nothing posted — surface the error like a normal failure.
+      return { success: false, error: chainError.message, retryable: false };
+    }
+
+    const firstUrl = firstRestId
+      ? `https://x.com/${screen}/status/${firstRestId}`
+      : 'https://x.com/';
+    if (chainError) {
+      // Partial chain: head tweet is up, later chunks failed. Return
+      // success so the user sees a link to what landed, but log the
+      // partial detail for visibility.
+      console.warn('[CrossPosty] X chain partial', {
+        posted: chainError.afterChunk,
+        of: chunks.length,
+        error: chainError.message,
+      });
+    }
+    return {
+      success: true,
+      url: firstUrl,
+      remoteId: firstRestId ?? '',
+    };
   },
 
   async validateCredentials(credentials): Promise<boolean> {
@@ -418,6 +525,20 @@ export const xAdapter: PlatformAdapter = {
       };
     }
     const expiresAt = authCookie.expirationDate;
+    // Surface a paused account in the popup so the user sees why
+    // posts aren't going through and how long until auto-unpause.
+    if (_credentials) {
+      const guard = await checkGuard('x', _credentials.accountId);
+      if (!guard.ok && guard.reason === 'paused') {
+        const hours = Math.max(1, Math.ceil((guard.pausedUntil - Date.now()) / 3_600_000));
+        return {
+          ok: false,
+          severity: 'red',
+          message: `Paused after X flagged us as automated. Auto-unpauses in ${hours}h, or clear from popup after browsing x.com natively.`,
+          expiresAt,
+        };
+      }
+    }
     const template = await loadXTemplate();
     if (!template) {
       return {

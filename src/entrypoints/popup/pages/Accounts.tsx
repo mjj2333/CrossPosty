@@ -18,6 +18,13 @@ function dotColor(severity: 'green' | 'yellow' | 'red'): string {
 
 // Human-readable expiry. Short durations get "in X hours/days"; anything
 // further out gets the absolute date so the user can compare at a glance.
+// Status message starts with "Paused" when a platform-guard pause is
+// active. The adapter writes that prefix specifically so the popup
+// can branch UI on it without re-querying the storage layer.
+function isPausedStatus(message: string | undefined): boolean {
+  return typeof message === 'string' && message.startsWith('Paused');
+}
+
 function formatExpiry(epochSeconds: number): string {
   const ms = epochSeconds * 1000 - Date.now();
   if (ms <= 0) return 'expired';
@@ -91,6 +98,18 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
   async function remove(accountId: string) {
     await deleteCredential(accountId);
     await refresh();
+  }
+
+  async function clearPlatformPause(accountId: string): Promise<void> {
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'CLEAR_PLATFORM_PAUSE',
+        payload: { accountId },
+      });
+      await refresh();
+    } catch (err) {
+      console.warn('[CrossPosty] clear pause failed', err);
+    }
   }
 
   async function reconnect(accountId: string) {
@@ -169,16 +188,28 @@ export function AccountsPage({ onAdd }: { onAdd: (platformId: AddableId) => void
                       </span>
                     </span>
                     <span className="flex items-center gap-3">
-                      {status?.severity === 'red' && (
-                        <button
-                          type="button"
-                          onClick={() => reconnect(a.accountId)}
-                          disabled={reconnectingId === a.accountId}
-                          className="text-emerald-700 text-xs hover:underline disabled:opacity-50"
-                        >
-                          {reconnectingId === a.accountId ? 'reconnecting…' : 'reconnect'}
-                        </button>
-                      )}
+                      {(a.platformId === 'threads' || a.platformId === 'x') &&
+                        isPausedStatus(status?.message) && (
+                          <button
+                            type="button"
+                            onClick={() => clearPlatformPause(a.accountId)}
+                            className="text-emerald-700 text-xs hover:underline"
+                          >
+                            unpause
+                          </button>
+                        )}
+                      {status?.severity === 'red' &&
+                        !((a.platformId === 'threads' || a.platformId === 'x') &&
+                          isPausedStatus(status?.message)) && (
+                          <button
+                            type="button"
+                            onClick={() => reconnect(a.accountId)}
+                            disabled={reconnectingId === a.accountId}
+                            className="text-emerald-700 text-xs hover:underline disabled:opacity-50"
+                          >
+                            {reconnectingId === a.accountId ? 'reconnecting…' : 'reconnect'}
+                          </button>
+                        )}
                       <button
                         type="button"
                         onClick={() => remove(a.accountId)}

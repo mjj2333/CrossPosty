@@ -50,7 +50,9 @@ export type Message =
   | {
       type: 'RECONNECT_ACCOUNT_RESPONSE';
       payload: { success: true } | { success: false; error: string };
-    };
+    }
+  | { type: 'CLEAR_PLATFORM_PAUSE'; payload: { accountId: string } }
+  | { type: 'CLEAR_PLATFORM_PAUSE_RESPONSE'; payload: { success: true } };
 
 export type MessageOf<T extends Message['type']> = Extract<Message, { type: T }>;
 

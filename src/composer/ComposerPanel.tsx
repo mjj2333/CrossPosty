@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import type { InterceptedPost } from '../interceptors/types';
 import { isContextInvalidatedError } from '../lib/context';
+import { formatForPlatform } from '../lib/format';
 import { serializeMediaAttachments } from '../lib/media-transport';
 import type { CrossPostResultEntry, Message } from '../lib/messaging';
 import type { AccountCredentials, PlatformId } from '../platforms/types';
+import { loadMentionMap, type MentionMap } from '../storage/mention-map';
 import { PlatformVariant, type VariantResult } from './PlatformVariant';
 
 type VariantState = {
   account: AccountCredentials;
   text: string;
   enabled: boolean;
+  unmappedMentions: string[];
   result?: VariantResult;
 };
 
@@ -31,9 +34,15 @@ function charLimitFor(platformId: PlatformId): number {
 export function ComposerPanel({
   intercepted,
   onClose,
+  onCrossPosted,
 }: {
   intercepted: InterceptedPost;
   onClose: () => void;
+  // Fires once the cross-post fan-out has resolved (success or failure
+  // for at least one variant). The receiver page uses this to mark the
+  // relay message consumed — so a phone post stays in the queue until
+  // the user has actually attempted to send it on the desktop.
+  onCrossPosted?: () => void;
 }) {
   const [variants, setVariants] = useState<VariantState[]>([]);
   const [busy, setBusy] = useState(false);
@@ -43,16 +52,40 @@ export function ComposerPanel({
   useEffect(() => {
     (async () => {
       try {
-        const listMsg: Message = { type: 'LIST_CREDENTIALS', payload: null };
-        const response = (await chrome.runtime.sendMessage(listMsg)) as {
-          type: 'LIST_CREDENTIALS_RESPONSE';
-          payload: AccountCredentials[];
-        };
-        const destinations = response.payload.filter(
+        const [listResponse, mentionMap] = await Promise.all([
+          chrome.runtime.sendMessage({
+            type: 'LIST_CREDENTIALS',
+            payload: null,
+          } satisfies Message) as Promise<{
+            type: 'LIST_CREDENTIALS_RESPONSE';
+            payload: AccountCredentials[];
+          }>,
+          loadMentionMap(),
+        ]);
+        const destinations = listResponse.payload.filter(
           (c) => c.platformId !== intercepted.sourcePlatformId,
         );
         setVariants(
-          destinations.map((account) => ({ account, text: intercepted.text, enabled: true })),
+          destinations.map((account) => {
+            const formatted = formatForPlatform(intercepted.text, {
+              platformId: account.platformId,
+              // 'phone' isn't a real platform identity for mention
+              // lookup — leave undefined so the mention map searches
+              // across all platforms for a match.
+              sourcePlatformId:
+                intercepted.sourcePlatformId === 'phone'
+                  ? undefined
+                  : intercepted.sourcePlatformId,
+              charLimit: charLimitFor(account.platformId),
+              mentionMap: mentionMap as MentionMap,
+            });
+            return {
+              account,
+              text: formatted.text,
+              enabled: true,
+              unmappedMentions: formatted.unmappedMentions,
+            };
+          }),
         );
         setLoaded(true);
       } catch (err) {
@@ -118,6 +151,11 @@ export function ComposerPanel({
       }),
     );
     setBusy(false);
+    // Signal the host (e.g. the relay receiver tab) that the fan-out
+    // has finished. Fires regardless of per-variant success — we mark
+    // consumed on attempt, not on success, since the user has seen the
+    // content and acted on it either way.
+    onCrossPosted?.();
   }
 
   return (
@@ -148,6 +186,7 @@ export function ComposerPanel({
               charLimit={charLimitFor(v.account.platformId)}
               enabled={v.enabled}
               mediaCount={intercepted.media.length}
+              unmappedMentions={v.unmappedMentions}
               onTextChange={(text) => update(i, { text })}
               onToggle={(enabled) => update(i, { enabled })}
               result={v.result}

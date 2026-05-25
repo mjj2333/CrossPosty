@@ -1,13 +1,23 @@
 import {
+  checkGuard,
+  formatGuardError,
+  pauseAccount,
+  recordAttempt,
+} from '../storage/platform-guard';
+import {
   loadThreadsTemplate,
+  loadThreadsTemplates,
   type ThreadsCreatePostTemplate,
 } from '../storage/threads-template';
 import type {
   AccountCredentials,
+  MediaAttachment,
   PlatformAdapter,
   PostContent,
   PostResult,
 } from './types';
+
+const MAX_IMAGES = 1;
 
 // Meta moved Threads from threads.net to threads.com in 2024; new users
 // see threads.com. We accept either as evidence of a logged-in session.
@@ -15,6 +25,65 @@ async function readSessionCookie(): Promise<{ value: string } | null> {
   for (const url of ['https://www.threads.com', 'https://www.threads.net']) {
     const c = await chrome.cookies.get({ url, name: 'sessionid' });
     if (c?.value) return { value: c.value };
+  }
+  return null;
+}
+
+// Threads checks `x-csrftoken` header against the `csrftoken` cookie at
+// request time. The captured template's CSRF header rotates whenever
+// Meta cycles the cookie (every few hours/days). Rather than force a
+// re-capture, read the current cookie and override the header right
+// before we replay.
+// Detects Meta's anti-automation checkpoint response. Threads/Instagram
+// return a JSON body like:
+//   {"message":"checkpoint_required","checkpoint_url":"https://...","lock":true,...}
+// The URL leads to a human-verification flow on instagram.com. Parsing
+// it out lets us open it for the user rather than dumping raw JSON at
+// them.
+function tryParseCheckpoint(body: string): { url: string } | null {
+  try {
+    const json = JSON.parse(body) as {
+      message?: string;
+      checkpoint_url?: string;
+    };
+    if (json.message === 'checkpoint_required' && typeof json.checkpoint_url === 'string') {
+      return { url: json.checkpoint_url };
+    }
+  } catch {
+    // not JSON; fall through
+  }
+  return null;
+}
+
+// 1x1 transparent PNG as a data URL — chrome.notifications.create
+// requires iconUrl for type='basic'. We don't ship a real icon asset
+// yet, so use this placeholder. The notification text is what matters.
+const NOTIF_ICON =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+async function openCheckpoint(url: string): Promise<void> {
+  try {
+    await chrome.tabs.create({ url, active: true });
+  } catch (err) {
+    console.warn('[CrossPosty] failed to open checkpoint tab', err);
+  }
+  try {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: NOTIF_ICON,
+      title: 'CrossPosty: Threads needs verification',
+      message:
+        "Meta is asking you to verify the account. Opened the checkpoint page — tap through it, then try the cross-post again.",
+    });
+  } catch (err) {
+    console.warn('[CrossPosty] failed to fire checkpoint notification', err);
+  }
+}
+
+async function readCsrfCookie(): Promise<string | null> {
+  for (const url of ['https://www.threads.com', 'https://www.threads.net']) {
+    const c = await chrome.cookies.get({ url, name: 'csrftoken' });
+    if (c?.value) return c.value;
   }
   return null;
 }
@@ -110,6 +179,103 @@ const TEXT_KEYS = new Set([
   'composer_text',
 ]);
 
+// Threads chunked image upload, mirroring what the web client does:
+//   POST https://www.threads.com/rupload_igphoto/fb_uploader_<upload_id>
+//   body: raw image bytes
+//   headers: x-entity-* + x-instagram-rupload-params (JSON with dims)
+// Returns the upload_id we generated — that same id is then attached as
+// `upload_id` on the configure POST so the server pairs the two together.
+async function uploadImageToThreads(
+  attachment: MediaAttachment,
+  baseHeaders: Record<string, string>,
+): Promise<string> {
+  const uploadId = String(Date.now());
+  const { width, height } = await getImageDimensions(attachment.blob);
+  const ruploadParams = JSON.stringify({
+    is_sidecar: '0',
+    is_threads: '1',
+    media_type: 1,
+    upload_id: uploadId,
+    upload_media_height: height,
+    upload_media_width: width,
+  });
+
+  // Reuse the template's session headers (cookies, x-ig-app-id, x-csrftoken,
+  // user-agent, etc.) but swap the body content-type and add the
+  // upload-specific x-entity-* / x-instagram-rupload-params headers.
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(baseHeaders)) {
+    if (k.toLowerCase() === 'content-type') continue;
+    headers[k] = v;
+  }
+  headers['content-type'] = attachment.mimeType;
+  headers['x-entity-length'] = String(attachment.blob.size);
+  headers['x-entity-name'] = `fb_uploader_${uploadId}`;
+  headers['x-entity-type'] = attachment.mimeType;
+  headers['x-instagram-rupload-params'] = ruploadParams;
+  headers['offset'] = '0';
+
+  const url = `https://www.threads.com/rupload_igphoto/fb_uploader_${uploadId}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: attachment.blob,
+  });
+  if (!res.ok) {
+    const preview = await safePreview(res);
+    throw new Error(`image upload HTTP ${res.status}: ${preview}`);
+  }
+  return uploadId;
+}
+
+// createImageBitmap is available in MV3 service workers (Chrome). Falls
+// back to 1x1 if decode fails — Threads still seems to accept the upload
+// in that case, but a real value is preferred so the image isn't
+// downscaled to nothing.
+async function getImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const dims = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return dims;
+  } catch {
+    return { width: 1, height: 1 };
+  }
+}
+
+async function safePreview(resp: Response): Promise<string> {
+  try {
+    return (await resp.text()).slice(0, 200);
+  } catch {
+    return '(no body)';
+  }
+}
+
+// Once we've uploaded the image and have an upload_id, inject it onto the
+// configure body so the configure POST attaches the freshly-uploaded
+// media. The captured template body may or may not already contain an
+// upload_id (depends on whether the native capture was text-only or
+// text+image) — set unconditionally so we end up with our id either way.
+function addUploadIdToBody(body: string, uploadId: string, contentType: string): string {
+  if (contentType === 'json') {
+    try {
+      const json = JSON.parse(body) as Record<string, unknown>;
+      json.upload_id = uploadId;
+      return JSON.stringify(json);
+    } catch {
+      return body;
+    }
+  }
+  try {
+    const params = new URLSearchParams(body);
+    params.set('upload_id', uploadId);
+    return params.toString();
+  } catch {
+    return body;
+  }
+}
+
 function mutateJsonText(node: unknown, newText: string, depth = 0): boolean {
   if (depth > 8) return false;
   if (typeof node !== 'object' || node === null) return false;
@@ -137,9 +303,9 @@ export const threadsAdapter: PlatformAdapter = {
   displayName: 'Threads',
   characterLimit: 500,
   mediaSupport: {
-    maxImages: 10,
-    maxVideoSeconds: 300,
-    supportedMimeTypes: ['image/jpeg', 'image/png', 'image/gif'],
+    maxImages: MAX_IMAGES,
+    maxVideoSeconds: 0,
+    supportedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   },
 
   async authenticate(): Promise<AccountCredentials> {
@@ -162,25 +328,91 @@ export const threadsAdapter: PlatformAdapter = {
     };
   },
 
-  async post(content: PostContent): Promise<PostResult> {
-    const template: ThreadsCreatePostTemplate | null = await loadThreadsTemplate();
-    if (!template) {
+  async post(content: PostContent, credentials: AccountCredentials): Promise<PostResult> {
+    // Refuse early if the account is rate-limited or paused after a
+    // recent checkpoint. Meta permabans accounts that look automated;
+    // these guards exist to make sure our extension can't be the thing
+    // that pushes the user over the line.
+    const guard = await checkGuard('threads', credentials.accountId);
+    if (!guard.ok) {
       return {
         success: false,
-        error:
-          'No Threads request template captured yet. Post natively on threads.net once so CrossPosty can learn the current request shape, then try again.',
+        error: formatGuardError('threads', guard),
+        retryable: false,
+      };
+    }
+    // Pick the right captured template up front: text-only vs image
+    // endpoint take genuinely different body shapes. We need the
+    // matching capture or the request 400/404s.
+    const willHaveImages = (content.media ?? []).some((m) =>
+      m.mimeType.startsWith('image/'),
+    );
+    const slot = willHaveImages ? 'withMedia' : 'textOnly';
+    const template: ThreadsCreatePostTemplate | null = await loadThreadsTemplate(slot);
+    if (!template) {
+      const hint = willHaveImages
+        ? 'Post a text + image Note natively on threads.com once so CrossPosty can learn the image-bearing request shape, then try again.'
+        : 'Post a text-only Note natively on threads.com once so CrossPosty can learn the text-only request shape, then try again.';
+      return {
+        success: false,
+        error: `No matching Threads template captured yet. ${hint}`,
         retryable: false,
       };
     }
 
-    const newBody = mutatePostText(template.bodyText, content.text, template.contentType);
+    const headers = stripVolatile(template.headers);
+    // Refresh the CSRF header from the live cookie. Meta rotates this
+    // every few hours; without the refresh, replays past the rotation
+    // window return "CSRF token missing or incorrect" 403. Carefully
+    // remove ALL case-variants of the header before writing the fresh
+    // one so we don't double up — the captured template might use any
+    // of x-csrftoken / X-CSRFToken / X-Csrftoken.
+    const csrf = await readCsrfCookie();
+    for (const k of Object.keys(headers)) {
+      if (k.toLowerCase() === 'x-csrftoken') delete headers[k];
+    }
+    if (csrf) {
+      headers['x-csrftoken'] = csrf;
+      console.log('[CrossPosty] Threads CSRF refreshed from cookie', { len: csrf.length });
+    } else {
+      console.warn('[CrossPosty] Threads csrftoken cookie missing — request likely to fail. Are you logged in to threads.com?');
+    }
+
+    // Upload images first — Threads' flow is upload -> configure with
+    // upload_id. Sequential keeps error attribution clean (we'd know
+    // which image failed) and v1 caps at a single image anyway, which
+    // is all the current configure-body template can pair with.
+    const images = (content.media ?? []).filter((m) =>
+      m.mimeType.startsWith('image/'),
+    );
+    const limitedImages = images.slice(0, MAX_IMAGES);
+    const uploadIds: string[] = [];
+    for (const m of limitedImages) {
+      try {
+        const id = await uploadImageToThreads(m, headers);
+        uploadIds.push(id);
+      } catch (err) {
+        return {
+          success: false,
+          error: `Threads image upload failed: ${String(err).slice(0, 200)}`,
+          retryable: true,
+        };
+      }
+    }
+
+    let newBody = mutatePostText(template.bodyText, content.text, template.contentType);
     if (newBody === template.bodyText) {
       console.warn(
         '[CrossPosty] Threads template body mutation found no text field — replaying captured body unchanged. Post may duplicate the previous template content.',
       );
     }
-
-    const headers = stripVolatile(template.headers);
+    const firstUploadId = uploadIds[0];
+    if (firstUploadId) {
+      newBody = addUploadIdToBody(newBody, firstUploadId, template.contentType);
+    }
+    // Template was selected up front for the matching endpoint (text-only
+    // vs withMedia) — its URL is already correct for our content shape.
+    const targetUrl = template.url;
     // The captured fetch headers won't include Content-Type when the page
     // passed a typed body (URLSearchParams, FormData) — the browser fills
     // that in automatically and it never lands in init.headers. When we
@@ -198,15 +430,23 @@ export const threadsAdapter: PlatformAdapter = {
       }
     }
     console.log('[CrossPosty] Threads adapter posting', {
-      url: template.url,
+      url: targetUrl,
+      slot,
       contentType: template.contentType,
       headerKeys: Object.keys(headers).join(', '),
       bodyMutated: newBody !== template.bodyText,
       bodyChars: newBody.length,
+      uploadIdsUsed: uploadIds,
     });
 
+    // Record the attempt BEFORE the fetch — Meta sees the request
+    // either way, so the rate counter must include attempts even when
+    // they fail. Otherwise repeated failures (checkpoint loops) could
+    // burn through Meta's tolerance without us throttling at all.
+    await recordAttempt(credentials.accountId);
+
     try {
-      const res = await fetch(template.url, {
+      const res = await fetch(targetUrl, {
         method: 'POST',
         credentials: 'include',
         headers,
@@ -226,6 +466,24 @@ export const threadsAdapter: PlatformAdapter = {
           preview = '(could not read body)';
         }
         console.warn('[CrossPosty] Threads error body', preview);
+        // Meta's checkpoint_required response carries a checkpoint_url
+        // the user has to clear manually. Open it for them + fire a
+        // notification + pause this account locally for 24h so we don't
+        // keep poking the lock and risk a permanent ban.
+        const checkpoint = tryParseCheckpoint(preview);
+        if (checkpoint) {
+          await pauseAccount(credentials.accountId, {
+            reason: 'Meta checkpoint_required',
+            checkpointUrl: checkpoint.url,
+          });
+          await openCheckpoint(checkpoint.url);
+          return {
+            success: false,
+            error:
+              'Threads checkpoint — opened a tab for you to clear it, and paused this account for 24h to protect it from a permanent ban. Unpause from the popup after verifying.',
+            retryable: false,
+          };
+        }
         return {
           success: false,
           error: `Threads HTTP ${res.status}: ${preview.slice(0, 200)}`,
@@ -255,7 +513,7 @@ export const threadsAdapter: PlatformAdapter = {
     return Boolean(session?.value);
   },
 
-  async getStatus() {
+  async getStatus(credentials) {
     // Find the sessionid cookie on either host so we can also surface
     // its expiration to the popup.
     let sessionCookie: chrome.cookies.Cookie | undefined;
@@ -274,12 +532,36 @@ export const threadsAdapter: PlatformAdapter = {
       };
     }
     const expiresAt = sessionCookie.expirationDate;
-    const template = await loadThreadsTemplate();
+    // Surface a paused account in the popup so the user sees why posts
+    // aren't going through and how long until auto-unpause.
+    if (credentials) {
+      const guard = await checkGuard('threads', credentials.accountId);
+      if (!guard.ok && guard.reason === 'paused') {
+        const hours = Math.max(1, Math.ceil((guard.pausedUntil - Date.now()) / 3_600_000));
+        return {
+          ok: false,
+          severity: 'red',
+          message: `Paused after Meta checkpoint. Auto-unpauses in ${hours}h, or clear from popup after verifying at ${guard.checkpointUrl ?? 'instagram.com'}.`,
+          expiresAt,
+        };
+      }
+    }
+    const store = await loadThreadsTemplates();
+    const template = store.textOnly ?? store.withMedia ?? null;
     if (!template) {
       return {
         ok: false,
         severity: 'yellow',
         message: 'No request template yet. Post once natively on threads.com to enable cross-posting.',
+        expiresAt,
+      };
+    }
+    if (!store.textOnly || !store.withMedia) {
+      const missing = !store.textOnly ? 'text-only' : 'text + image';
+      return {
+        ok: true,
+        severity: 'yellow',
+        message: `Only one shape captured. Post a ${missing} Note natively to enable both cross-post modes.`,
         expiresAt,
       };
     }

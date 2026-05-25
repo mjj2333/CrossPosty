@@ -1,8 +1,12 @@
 // Threads' web client uses Meta's internal API with a rotating operation
 // hash and feature-flag payload — same brittleness profile as X. Same
 // solution: snapshot the user's most recent native compose request and
-// replay its shape when cross-posting. The template self-updates every
-// time the user posts natively on threads.net.
+// replay its shape when cross-posting. We keep two templates: one for
+// the text-only endpoint and one for the image-bearing endpoint. The
+// captured body shape differs between them (image bodies carry
+// upload_id + caption_with_entities + extra fields), and Meta's edge
+// 404s when we send the wrong body to a given endpoint. Each template
+// self-updates every time the user posts that shape natively.
 
 export type ThreadsCreatePostTemplate = {
   version: 1;
@@ -13,15 +17,58 @@ export type ThreadsCreatePostTemplate = {
   capturedAt: number;
 };
 
+// Slot key derived from the captured URL.
+//   "textOnly"   -> /api/v1/media/configure_text_only_post/
+//   "withMedia"  -> /api/v1/media/configure_text_post_app_feed/
+//   Anything else (configure_post, configure_to_clips, ...) maps to
+//   "withMedia" since those also carry an upload_id.
+export type ThreadsTemplateSlot = 'textOnly' | 'withMedia';
+
+type ThreadsTemplateStore = {
+  version: 2;
+  textOnly?: ThreadsCreatePostTemplate;
+  withMedia?: ThreadsCreatePostTemplate;
+};
+
 const KEY = 'threadsTemplate';
 
-export async function loadThreadsTemplate(): Promise<ThreadsCreatePostTemplate | null> {
+export function classifyEndpoint(url: string): ThreadsTemplateSlot {
+  return /\/configure_text_only_post\b/i.test(url) ? 'textOnly' : 'withMedia';
+}
+
+// Backwards compat: prior versions stored a single ThreadsCreatePostTemplate
+// at this key. Read that and route it into the right slot so older users
+// don't lose their captured shape on upgrade.
+export async function loadThreadsTemplates(): Promise<ThreadsTemplateStore> {
   const stored = await chrome.storage.local.get(KEY);
-  return (stored[KEY] as ThreadsCreatePostTemplate | undefined) ?? null;
+  const raw = stored[KEY] as ThreadsTemplateStore | ThreadsCreatePostTemplate | undefined;
+  if (!raw) return { version: 2 };
+  if ('version' in raw && raw.version === 2) {
+    return raw as ThreadsTemplateStore;
+  }
+  // Treat anything else as a legacy single-template record.
+  const legacy = raw as ThreadsCreatePostTemplate;
+  if (!legacy.url) return { version: 2 };
+  const slot = classifyEndpoint(legacy.url);
+  return { version: 2, [slot]: legacy };
+}
+
+// Picks the right template for a given content shape. Returns null only
+// if there's no template at all for that slot — caller surfaces a
+// "capture by posting natively" message.
+export async function loadThreadsTemplate(
+  slot: ThreadsTemplateSlot = 'textOnly',
+): Promise<ThreadsCreatePostTemplate | null> {
+  const store = await loadThreadsTemplates();
+  return store[slot] ?? null;
 }
 
 export async function saveThreadsTemplate(t: ThreadsCreatePostTemplate): Promise<void> {
-  await chrome.storage.local.set({ [KEY]: t });
+  const slot = classifyEndpoint(t.url);
+  const store = await loadThreadsTemplates();
+  store[slot] = t;
+  store.version = 2;
+  await chrome.storage.local.set({ [KEY]: store });
 }
 
 export function buildThreadsTemplate(

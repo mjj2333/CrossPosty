@@ -119,9 +119,22 @@ export async function pdsFetch(
         continue;
       }
       if (!refreshed && /invalid_token|invalid_dpop_proof/.test(wwwAuth)) {
-        session = await refreshAtprotoOAuthSession(session);
-        refreshed = true;
-        continue;
+        try {
+          session = await refreshAtprotoOAuthSession(session);
+          refreshed = true;
+          console.log('[CrossPosty] pdsFetch refreshed session — re-trying');
+          continue;
+        } catch (err) {
+          console.warn(
+            '[CrossPosty] pdsFetch refresh failed — refresh_token likely revoked. Reconnect the BSky account.',
+            { error: String(err).slice(0, 200) },
+          );
+          // Surface a clearer error than the raw 401. The bluesky
+          // adapter shows whatever pdsFetch throws as the variant error.
+          throw new Error(
+            `BSky session refresh failed: ${String(err).slice(0, 120)}. Reconnect the account in the popup.`,
+          );
+        }
       }
     }
     return { response: resp, session };

@@ -41,7 +41,7 @@ export default defineContentScript({
 // in their body — narrowing to these URL patterns is the surest signal
 // that what we're capturing is actually the post-creation request.
 const THREADS_COMPOSE_URL_RE =
-  /\/api\/v1\/media\/(?:configure_text_only_post|configure_post|configure_to_clips)\b/i;
+  /\/api\/v1\/media\/(?:configure_text_only_post|configure_text_post_app_feed|configure_post|configure_to_clips)\b/i;
 
 function installTemplateCapture(): void {
   window.addEventListener('crossposty:intercept', (ev) => {

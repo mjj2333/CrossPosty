@@ -1,5 +1,7 @@
 import { installHealthCheckAlarm, runHealthCheckAndBadge, updateBadge } from '../lib/account-health';
+import { installBskyRefreshAlarm, refreshAllStaleBskySessions } from '../lib/atproto-oauth/auto-refresh';
 import { logger } from '../lib/logger';
+import { installRelayAlarm, pollRelayOnce } from '../lib/relay/poll';
 import { deserializeMediaAttachments } from '../lib/media-transport';
 import type {
   AccountStatusEntry,
@@ -16,6 +18,7 @@ import type {
   PostResult,
 } from '../platforms/types';
 import { addCredential, loadCredentials, updateCredential } from '../storage/credentials';
+import { clearPause } from '../storage/platform-guard';
 
 // Re-derives the params an adapter.authenticate() call would need to
 // refresh this credential's session, using whatever's already stored
@@ -131,6 +134,22 @@ export default defineBackground(() => {
   // First-pass health check shortly after SW boot so the badge reflects
   // reality before the user even opens the popup.
   void runHealthCheckAndBadge();
+  // Phone-to-extension relay: polls Supabase for encrypted messages,
+  // opens a receiver tab when one arrives. No-op if no pairing exists.
+  installRelayAlarm();
+  // Eager first poll on SW boot so the user doesn't wait up to 30s for
+  // a queued phone message after Chrome restart.
+  void pollRelayOnce().catch((err) =>
+    logger.warn('relay first poll failed', { error: String(err) }),
+  );
+  // BSky OAuth access tokens expire every ~30 min; pre-refresh anything
+  // within the expiry window so the user never has to click reconnect
+  // for the common case. Reactive refresh on 401 in pdsFetch remains
+  // as a fallback for race conditions.
+  installBskyRefreshAlarm();
+  void refreshAllStaleBskySessions().catch((err) =>
+    logger.warn('BSky refresh on boot failed', { error: String(err) }),
+  );
 
   onMessage(async (msg: Message) => {
     if (msg.type === 'LIST_CREDENTIALS') {
@@ -151,6 +170,15 @@ export default defineBackground(() => {
         const response: AuthenticateResponse = { success: false, error: String(err) };
         return response;
       }
+    }
+
+    if (msg.type === 'CLEAR_PLATFORM_PAUSE') {
+      await clearPause(msg.payload.accountId);
+      void runHealthCheckAndBadge();
+      return {
+        type: 'CLEAR_PLATFORM_PAUSE_RESPONSE',
+        payload: { success: true },
+      };
     }
 
     if (msg.type === 'RECONNECT_ACCOUNT') {
