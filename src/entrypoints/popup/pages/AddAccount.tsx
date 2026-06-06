@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import type { AuthenticateResponse, Message } from '../../../lib/messaging';
 import type { PlatformId } from '../../../platforms/types';
-import { RATE_LIMITS } from '../../../storage/platform-guard';
 
 type AddableId = PlatformId;
 
@@ -86,12 +85,11 @@ export function AddAccountPage({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [bskyMethod, setBskyMethod] = useState<BskyAuthMethod>('oauth');
-  // Threads-only: Meta's bans are ban-first (vs X's throttle-first),
-  // and the user has a personal data point on a Meta permaban. Surface
-  // the risk explicitly before the user commits. X has no equivalent
-  // gate — its failure mode is "posting stops," not "account lost."
-  const [threadsRiskAcknowledged, setThreadsRiskAcknowledged] = useState(false);
-  const needsConsent = platformId === 'threads' && !threadsRiskAcknowledged;
+  // No active consent gates. Threads was dropped 2026-06-06 due to
+  // Meta's enforcement profile; X has no gate because its failure mode
+  // is "posting stops," not "account lost." Keep the variable so the
+  // Connect button still has a `needsConsent` slot for future gates.
+  const needsConsent = false;
 
   const fields = fieldsFor(platformId, bskyMethod);
   const helper = helperFor(platformId, bskyMethod);
@@ -193,38 +191,6 @@ export function AddAccountPage({
           >
             App password
           </button>
-        </div>
-      )}
-      {platformId === 'threads' && (
-        <div className="border border-amber-400 bg-amber-50 rounded p-2 text-xs text-amber-900 space-y-1">
-          <p className="font-semibold">Before you connect Threads…</p>
-          <p>
-            Meta's terms officially forbid third-party posting tools.
-            In practice, established accounts with organic activity
-            tolerate this kind of tool well. Two things to know:
-          </p>
-          <p>
-            <strong>1.</strong> Don't connect a brand-new Threads
-            account. Meta runs identity sweeps that ban accounts they
-            consider "fake" — independent of how you use the account.
-            Let it age 2-3+ months with normal browsing and a handful
-            of native posts before connecting CrossPosty.
-          </p>
-          <p>
-            <strong>2.</strong> Stay at reasonable cadence — CrossPosty
-            caps Threads to {RATE_LIMITS.threads} posts/hr and
-            auto-pauses 24h on verification checkpoints, but don't
-            marathon-post even within those limits.
-          </p>
-          <label className="flex items-start gap-2 mt-1">
-            <input
-              type="checkbox"
-              checked={threadsRiskAcknowledged}
-              onChange={(e) => setThreadsRiskAcknowledged(e.target.checked)}
-              className="mt-0.5"
-            />
-            <span>I understand and accept the risk.</span>
-          </label>
         </div>
       )}
       {helper && <p className="text-xs text-gray-600">{helper}</p>}

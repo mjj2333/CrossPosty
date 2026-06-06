@@ -10,7 +10,6 @@ import {
 const PLATFORMS: { id: PlatformId; label: string }[] = [
   { id: 'x', label: 'X' },
   { id: 'bluesky', label: 'BlueSky' },
-  { id: 'threads', label: 'Threads' },
   { id: 'mastodon', label: 'Mastodon' },
   { id: 'substack', label: 'Substack' },
   { id: 'linkedin', label: 'LinkedIn' },
