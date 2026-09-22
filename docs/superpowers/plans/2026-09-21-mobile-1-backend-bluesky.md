@@ -1798,7 +1798,7 @@ async function setup(opts: {
   const x = opts.x ?? stubAdapter('x');
   const post: PostRow = {
     id: 'p1', user_id: 'u1', status: 'posting', scheduled_at: NOW.toISOString(),
-    text: 'hello @alice', variants: {}, media: [], targets: opts.targets ?? ['bluesky', 'x'],
+    text: 'hello @alice_x', variants: {}, media: [], targets: opts.targets ?? ['bluesky', 'x'],
     results: opts.results ?? {}, posting_started_at: NOW.toISOString(),
     created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
   };
@@ -1832,7 +1832,7 @@ Deno.test('uses a per-platform variant when present', async () => {
   const s = await setup();
   s.post.variants = { x: 'x-only text' };
   await processPost(s.post, s.deps);
-  assertEquals(s.bluesky.posted, ['hello alice']);
+  assertEquals(s.bluesky.posted, ['hello alice_x']);
   assertEquals(s.x.posted, ['x-only text']);
 });
 
