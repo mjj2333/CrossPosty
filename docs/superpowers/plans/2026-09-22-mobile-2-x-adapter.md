@@ -203,8 +203,14 @@ function suffixWidth(total: number): number {
   return 1 + String(total).length + 1 + String(total).length;
 }
 
-// Largest n such that measure(text.slice(0, n)) <= budget. Adding
-// characters never lowers a measure, so binary search is safe.
+// A prefix of `text` that measures at or under `budget` — the largest
+// one when `measure` is monotone (the default char count). X's measure
+// is NOT monotone: extending a prefix past a run of punctuation glued
+// to a URL collapses that run into the 23-char URL weight and LOWERS
+// the measure. Binary search is still sound because `lo` only ever
+// takes a value that was tested and passed, so the result always fits;
+// it may just be shorter than optimal. Callers must cut at a token
+// boundary (or at `headLen` itself) for the same reason.
 function longestPrefix(text: string, budget: number, measure: Measure): number {
   let lo = 0;
   let hi = text.length;
@@ -695,7 +701,10 @@ export function createXAdapter(
 }
 ```
 
-Note for the implementer: X sometimes returns HTTP 201 for a created post; `res.ok` covers it. If `deno lint` flags the nested ternary in `xError`, rewrite it as if/else.
+Notes for the implementer (from the Task 1 review):
+- Treat a missing or NaN `expiresAt` as expired: write the freshness check as `if (tokens.expiresAt > nowMs + REFRESH_WINDOW_MS)` (a comparison against `undefined` is false, which correctly falls through to refresh) rather than `expiresAt - nowMs > ...` (which yields NaN and would also fall through, but less obviously). Add a test with `expiresAt: undefined as unknown as number`.
+- `PostErrorInfo.code` must actually be populated by `xError` (it is, from `title`), and the job leaves classification to `kind`; that is intended.
+- X sometimes returns HTTP 201 for a created post; `res.ok` covers it. If `deno lint` flags the nested ternary in `xError`, rewrite it as if/else.
 
 - [ ] **Step 4: Run tests** — `deno test supabase/functions/_shared/adapters/x.test.ts` → `ok | 11 passed`.
 
