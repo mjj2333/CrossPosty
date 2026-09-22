@@ -12,7 +12,10 @@
 
 **Plans that follow:** 2 = X adapter + OAuth, 3 = PWA, 4 = push, cleanup, migration.
 
-**Carry-forward for Plan 2 (from the Task 2–5 code review):** `splitIntoChain` sizes chunks by raw `.length`. For X, URLs count 23 characters regardless of length, so a chunk containing a short URL can exceed 280. The X adapter task must give the splitter a length function (`effectiveLength(text, X_URL_WEIGHT)`) rather than call it with raw lengths.
+**Carry-forwards for Plan 2 (from the Task 2–8 code reviews):**
+- `splitIntoChain` sizes chunks by raw `.length`. For X, URLs count 23 characters regardless of length, so a chunk containing a short URL can exceed 280. The X adapter must give the splitter a length function (`effectiveLength(text, X_URL_WEIGHT)`); add `urlWeight?: number` (or `measure(text)`) to the `Adapter` interface at that point.
+- `PostError` carries only `kind`. X returns provider codes (226 automation, 344 daily limit, duplicate content) and `Retry-After` on 429; extend to `{ kind, status?, code?, retryAfterMs? }` when the X adapter needs to distinguish them.
+- atproto may report an expired access JWT as HTTP 400 `{"error":"ExpiredToken"}` rather than 401. `refreshIfNeeded` refreshes proactively so this should not be hit; confirm in the live smoke test and, if seen, inspect the atproto `error` name in `httpError`.
 
 ---
 
@@ -29,7 +32,8 @@ C:\Users\drice\CrossPosty-mobile\
     config.toml                      # from `supabase init`, plus per-function verify_jwt = false
     migrations/
       20260921000001_init.sql        # enums, tables, RLS, claim/set_target_result functions, bucket, owner trigger
-      20260921000002_cron.sql        # pg_cron + pg_net schedule
+      20260921000002_storage.sql     # bucket + storage.objects policy (own file so a storage DDL failure can't roll back the schema)
+      20260921000003_cron.sql        # pg_cron + pg_net schedule
     functions/
       import_map.json                # same imports as deno.json, for `supabase functions deploy`
       _shared/
@@ -2371,7 +2375,7 @@ git commit -m "feat(functions): run-due-posts scheduler and connect-bluesky"
 ### Task 14: Cron migration, secrets, and deploy
 
 **Files:**
-- Create: `supabase/migrations/20260921000002_cron.sql`
+- Create: `supabase/migrations/20260921000003_cron.sql`
 - Create: `docs/SETUP.md`
 
 - [ ] **Step 1: Write the cron migration**
@@ -2433,7 +2437,11 @@ npx supabase db push
 select vault.create_secret('you@example.com', 'owner_email');
 select vault.create_secret('https://zexbkbkobqdosezkuuqj.supabase.co', 'project_url');
 select vault.create_secret('<CRON_SECRET from step 1>', 'cron_secret');
+-- Confirm the trigger can read them (must list all three):
+select name from vault.decrypted_secrets;
 ```
+
+Do this **before** the first sign-in or smoke test: the owner-email trigger rejects every sign-up until `owner_email` exists, and the client only sees an opaque `500 Database error saving new user`.
 
 ## 4. Edge Function secrets
 
@@ -2494,7 +2502,7 @@ Expected: rows appearing each minute with `status = succeeded`. Then check the f
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add supabase/migrations/20260921000002_cron.sql docs/SETUP.md
+git add supabase/migrations/20260921000003_cron.sql docs/SETUP.md
 git commit -m "feat(db): pg_cron schedule for run-due-posts; setup docs"
 ```
 
