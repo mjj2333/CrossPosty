@@ -16,6 +16,9 @@
 - `splitIntoChain` sizes chunks by raw `.length`. For X, URLs count 23 characters regardless of length, so a chunk containing a short URL can exceed 280. The X adapter must give the splitter a length function (`effectiveLength(text, X_URL_WEIGHT)`); add `urlWeight?: number` (or `measure(text)`) to the `Adapter` interface at that point.
 - `PostError` carries only `kind`. X returns provider codes (226 automation, 344 daily limit, duplicate content) and `Retry-After` on 429; extend to `{ kind, status?, code?, retryAfterMs? }` when the X adapter needs to distinguish them.
 - atproto may report an expired access JWT as HTTP 400 `{"error":"ExpiredToken"}` rather than 401. `refreshIfNeeded` refreshes proactively so this should not be hit; confirm in the live smoke test and, if seen, inspect the atproto `error` name in `httpError`.
+- `MAX_IMAGES = 4` lives in the platform-agnostic chain runner; add `maxImages` to `Adapter` alongside `urlWeight` when the X adapter lands, and have each adapter clamp.
+- Bluesky `refreshSession` can return `AccountTakedown`, and session responses carry `active`/`status` (`takendown`, `suspended`, `deactivated`). Currently a takedown falls through to a pointless re-login; read the atproto `error` name and the `status` field when extending `PostError` with metadata.
+- `jwtExpiryMs` returning null (JWT without `exp`) makes the job refresh on every run. Real atproto JWTs carry `exp`; if a token format change ever removes it, rate-limit refreshes using `accounts.expires_at`.
 
 ---
 
