@@ -18,6 +18,7 @@
 - atproto may report an expired access JWT as HTTP 400 `{"error":"ExpiredToken"}` rather than 401. `refreshIfNeeded` refreshes proactively so this should not be hit; confirm in the live smoke test and, if seen, inspect the atproto `error` name in `httpError`.
 - `MAX_IMAGES = 4` lives in the platform-agnostic chain runner; add `maxImages` to `Adapter` alongside `urlWeight` when the X adapter lands, and have each adapter clamp.
 - Bluesky `refreshSession` can return `AccountTakedown`, and session responses carry `active`/`status` (`takendown`, `suspended`, `deactivated`). Currently a takedown falls through to a pointless re-login; read the atproto `error` name and the `status` field when extending `PostError` with metadata.
+- **Plan 3 (PWA):** cancel must be `update ... eq('status','scheduled')` so it refuses to cancel a post the job is actively sending; `finishPost` on the server side already only touches rows still in `posting`. Display `accounts.status`, not `expires_at` (which is access-token expiry, not account validity). Show `results[platform].unmappedMentions` after a send. Retries rewrite `scheduled_at`, so the Scheduled list shows the retry time, not the user's original choice.
 - `jwtExpiryMs` returning null (JWT without `exp`) makes the job refresh on every run. Real atproto JWTs carry `exp`; if a token format change ever removes it, rate-limit refreshes using `accounts.expires_at`.
 
 ---
