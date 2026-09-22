@@ -215,6 +215,19 @@ docs/         SETUP.md (one-time setup checklist), MANUAL.md
 - Drop the relay table, `relay-media` bucket and pairing from the Supabase project after the new schema is live.
 - Retire the pairing PWA by repointing its Netlify site.
 
+## Plan 1 amendments (2026-09-21)
+
+Decisions made while writing the first implementation plan:
+
+- **Shared code location**: `supabase/functions/_shared/` instead of a top-level `shared/`, because the Supabase CLI bundles only files under `supabase/functions/`. The PWA imports from there via a path alias.
+- **Backend tests**: all under `deno test` (`@std/assert`), not Vitest. Vitest is for the PWA only.
+- **`accounts.secret`** is `text` holding base64(iv || ciphertext), not `bytea`; simpler through supabase-js.
+- **Image compression** happens on the phone before upload (canvas is available there; Deno has none). The server rejects images over 2,000,000 bytes for Bluesky with a permanent error.
+- **Cron authentication**: `run-due-posts` checks an `x-cron-secret` header against a `CRON_SECRET` secret, and functions are deployed with `verify_jwt = false`, so the setup works with both legacy JWT keys and the newer `sb_secret_...` keys.
+- **Bluesky client**: plain XRPC over `fetch` with an injected `fetch` for tests, rather than `@atproto/api`.
+- **Retry wake-up**: when a target is left pending, the post's `scheduled_at` is set to the earliest `nextAttemptAt`, so the claim query picks it up at the right minute without polling.
+- **Implementation is split into four plans**: 1 backend + Bluesky, 2 X adapter + OAuth, 3 PWA (including `post-now` and settings), 4 push notifications, storage cleanup cron, relay teardown.
+
 ## Out of scope
 
 Multiple users, multiple accounts per platform, video, drafts synced across devices, analytics, any platform other than Bluesky and X, an App Store listing.
