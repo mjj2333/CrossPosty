@@ -12,6 +12,8 @@
 
 **Plans that follow:** 2 = X adapter + OAuth, 3 = PWA, 4 = push, cleanup, migration.
 
+**Carry-forward for Plan 2 (from the Task 2–5 code review):** `splitIntoChain` sizes chunks by raw `.length`. For X, URLs count 23 characters regardless of length, so a chunk containing a short URL can exceed 280. The X adapter task must give the splitter a length function (`effectiveLength(text, X_URL_WEIGHT)`) rather than call it with raw lengths.
+
 ---
 
 ## File structure
@@ -600,9 +602,11 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-export function base64ToBytes(b64: string): Uint8Array {
+export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
+  // Backed by a plain ArrayBuffer so the result satisfies `BufferSource`
+  // for crypto.subtle under TypeScript 6 (Uint8Array<ArrayBufferLike> does not).
+  const out = new Uint8Array(new ArrayBuffer(bin.length));
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
