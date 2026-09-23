@@ -1,6 +1,6 @@
 # CrossPosty
 
-> **Superseded.** Development moved to [CrossPosty-mobile](https://github.com/mjj2333/CrossPosty-mobile): a phone-only PWA with server-side scheduling (Supabase) that posts to Bluesky and, via the official API, X. This extension is kept for its history (Threads / Substack / LinkedIn / Mastodon adapters) and is no longer maintained.
+> **Superseded.** Development moved to [CrossPosty-mobile](https://github.com/mjj2333/CrossPosty-mobile): a phone-only PWA with server-side scheduling (Supabase) that posts to Bluesky and, via the official API, X. It is live at https://crossposty-phone.netlify.app. This extension is kept for its history (Threads / Substack / LinkedIn / Mastodon adapters) and is no longer maintained; the Supabase relay it used was removed on 2026-09-23.
 
 Cross-post natively from X and BlueSky to BlueSky, Mastodon, and LinkedIn — a Manifest V3 browser extension that hooks the compose flow on X and BlueSky and lets you fan the post out to all your other accounts, with per-platform edits.
 
