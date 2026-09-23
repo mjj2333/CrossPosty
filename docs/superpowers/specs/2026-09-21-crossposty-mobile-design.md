@@ -228,6 +228,13 @@ Decisions made while writing the first implementation plan:
 - **Retry wake-up**: when a target is left pending, the post's `scheduled_at` is set to the earliest `nextAttemptAt`, so the claim query picks it up at the right minute without polling.
 - **Implementation is split into four plans**: 1 backend + Bluesky, 2 X adapter + OAuth, 3 PWA (including `post-now` and settings), 4 push notifications, storage cleanup cron, relay teardown.
 
+## Amendment 2026-09-23: multiple users (Plan 5)
+
+- **Users**: any email in the `allowed_emails` table may sign in (replaces the single `owner_email` Vault lock). The owner adds emails by SQL. Everything else was already per-user (RLS on every table; cleanup and cron iterate users).
+- **X connection**: an in-app "Connect X" runs OAuth 2.0 with PKCE against the owner's X developer app. The PWA holds the verifier, X redirects to `/oauth/x/callback`, and an `x-oauth-callback` Edge Function exchanges the code with the client secret, requires the `media.write` scope, and stores the encrypted tokens under the signed-in user. All users' X posts bill the owner's developer balance (decision: option A). The `authorize-x` script remains a fallback.
+- **Bluesky**: unchanged; each user connects with their own app password in the app.
+- Out of scope: multiple accounts per platform, per-user X billing, an admin screen.
+
 ## Out of scope
 
 Multiple users, multiple accounts per platform, video, drafts synced across devices, analytics, any platform other than Bluesky and X, an App Store listing.
