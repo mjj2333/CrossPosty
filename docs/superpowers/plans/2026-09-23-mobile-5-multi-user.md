@@ -39,11 +39,12 @@ docs/SETUP.md                                          # §14 adding a user, con
 -- Who may sign in. Replaces the single owner_email Vault check. The owner
 -- adds rows by SQL:  insert into allowed_emails (email) values ('x@y.z');
 create table allowed_emails (
-  email    text primary key,
+  email    text primary key check (email = lower(email)),  -- a capitalised row would silently lock the user out
   added_at timestamptz not null default now()
 );
 -- Only the trigger (security definer) reads it; nobody writes it from the app.
 revoke all on allowed_emails from anon, authenticated;
+alter table allowed_emails enable row level security;
 
 -- Seed with the existing owner so nothing changes for them.
 insert into allowed_emails (email)
@@ -364,7 +365,7 @@ export function XCallback() {
 - [ ] `npx supabase db query --linked "insert into allowed_emails (email) values ('<julia email, lowercase>')"`.
 - [ ] **Owner self-test** in Safari on the phone or a desktop browser: Accounts → Reconnect X → approve → "Connected @Drice4523". Then Post now a text post to X to prove the new tokens work.
 - [ ] **Julia**: opens the URL, signs in with her email and code, Accounts → Bluesky (handle + app password) → Connect X (approve) → Compose a post to both → Post now. Owner confirms the X charge appears on the developer account.
-- [ ] `docs/SETUP.md` §14: adding a user (SQL), connecting X, Safari note; commit and push.
+- [ ] `docs/SETUP.md` §14: adding a user (SQL, lowercase), connecting X, Safari note, and: each person must connect their *own* X account — re-authorising an X account already connected under another user invalidates that user's refresh token. Commit and push.
 
 ---
 
