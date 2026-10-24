@@ -63,7 +63,9 @@ Check constraints enforce the ranges. Existing `settings` grants and the "own se
 
 Written only by the service role. Authenticated users may `select` their own row (RLS), so the card can show the last error.
 
-Switching on is done by a security-definer RPC `auto_like_enable()` that upserts the state row with `watermark = now()`, clears `last_error`, marks any still-`queued` events as `skipped`/`stale`, and sets `settings.auto_like_enabled = true` in one transaction, so a stale watermark or an old queue from a previous enablement can never cause a burst of late likes. Switching off is a plain settings update; the state row is kept.
+Switching on is enforced at the database: a security-definer trigger on `settings` fires whenever `auto_like_enabled` goes from off to on (insert or update, by any path) and upserts the state row with `watermark = now()`, clears `last_error`, and marks any still-`queued` events as `skipped`/`stale`. So a stale watermark or an old queue from a previous enablement can never cause a burst of late likes, even if a client writes the flag directly. The RPC `auto_like_enable()` is just the flag flip. The run lease is not touched by enabling; an in-flight tick keeps its lease until it expires. Switching off is a plain settings update; the state row is kept. An in-flight tick may still like up to one batch of rows that enabling has just retired as stale; the ledger records what actually happened.
+
+`setRunResult` releases only the lease value this tick claimed (a run that overran its lease must not release a newer owner's). PostgREST calls carry a 15 s timeout so a run cannot stall past its lease.
 
 ### 3.3 `auto_like_events` (ledger, one row per reply considered)
 
