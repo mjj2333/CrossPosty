@@ -16,7 +16,7 @@
 
 ## 2. Architecture
 
-A new Edge Function **`auto-like`** at `supabase/functions/auto-like/index.ts`, scheduled by a new migration (`cron.schedule('auto-like', '* * * * *', …)`) with the same `x-cron-secret` header and Vault lookups as `run-due-posts`. Pure logic lives in `supabase/functions/_shared/auto-like.ts` with injected dependencies, mirroring `job.ts` / `processPost`, so it is unit-testable with stub adapters and a stub database.
+A new Edge Function **`auto-like`** at `supabase/functions/auto-like/index.ts`, scheduled by a new migration (`cron.schedule('auto-like', '* * * * *', …)`) with the same `x-cron-secret` header and Vault lookups as `run-due-posts`. Pure logic lives in `supabase/functions/_shared/auto-like/` (`decide.ts` rules, `run.ts` orchestration, `db.ts` Supabase implementation) with injected dependencies, mirroring `job.ts` / `processPost`, so it is unit-testable with stub adapters and a stub database.
 
 Each tick:
 
@@ -30,7 +30,7 @@ Each tick:
 4. **Run lease.** Ticks can overlap (a slow tick runs past the next cron fire), and a like is not idempotent on Bluesky. Each user run first claims `auto_like_state.run_lease_until` with a conditional update (`where run_lease_until is null or run_lease_until < now()`), holding it for 90 s; a tick that fails to claim reports `skipped: previous run still in progress` and does nothing. `setRunResult` releases the lease. Dry runs do not claim.
 5. **Scan and like passes are independent.** A scan failure (transient or permanent) is recorded in `last_error` but the like pass still runs, so a bad notification can never freeze a user's queue. A `reauth` error from either pass marks the account and stops everything.
 
-Response body: `{ users: n, summary: [{ user_id, scanned, queued, skipped, liked, failed, error? }] }`. A `?dry_run=1` query parameter (still cron-secret-authenticated) runs the scan pass and returns each decision in the response (`dry: [{ handle, uri, outcome, reason }]`) instead of writing events; it performs no likes, writes nothing to the ledger or state, and does not advance the watermark. An optional `&lookback=<minutes>` moves the watermark back for that dry scan only, so the rules can be checked against replies that already exist on the test account.
+Response body: `{ users: n, dry_run: boolean, summary: [{ user_id, scanned, queued, skipped, liked, failed, error?, dry? }] }`. A `?dry_run=1` query parameter (still cron-secret-authenticated) runs the scan pass and returns each decision in the response (`dry: [{ handle, uri, outcome, reason }]`) instead of writing events; it performs no likes, writes nothing to the ledger or state, and does not advance the watermark. An optional `&lookback=<minutes>` moves the watermark back for that dry scan only, so the rules can be checked against replies that already exist on the test account.
 
 ## 3. Data model
 
@@ -84,7 +84,7 @@ Switching on is enforced at the database: a security-definer trigger on `setting
 | `created_at` | timestamptz not null default now() | |
 | `liked_at` | timestamptz | |
 
-Indexes: unique `(user_id, reply_uri)` (idempotent rescans, never a double like); `(user_id, created_at desc)` for the card; `(decision, due_at)` for the like pass; partial `(user_id, liked_at)` where `decision = 'liked'` for the cap and the counts.
+Indexes: unique `(user_id, reply_uri)` (idempotent rescans, never a double row); `(user_id, created_at desc)` for the card; partial `(user_id, due_at)` where `decision = 'queued'` for the like pass; partial `(user_id, liked_at)` where `decision = 'liked'` for the cap and the counts.
 
 Grants: `select` to `authenticated` with an "own events" RLS policy; everything else service role only.
 
@@ -94,7 +94,7 @@ Retention: the existing daily `cleanup-media` run deletes `auto_like_events` old
 
 ### 4.1 Fetch
 
-`GET /xrpc/app.bsky.notification.listNotifications?reasons=reply&limit=50` on the user's PDS with the session token. Notifications arrive newest first. Walk pages (cursor) until a notification with `indexedAt <= watermark` is reached or 5 pages have been read; take everything newer. After a successful scan, set `watermark` to the newest `indexedAt` seen (unchanged if nothing new). The 5-page ceiling bounds a single tick at 250 notifications; anything older than that after a viral spike is deliberately dropped, which is acceptable for a courtesy feature and keeps the tick inside the wall clock.
+`GET /xrpc/app.bsky.notification.listNotifications?reasons=reply&limit=50` on the user's PDS with the session token. Notifications arrive newest first. Walk pages (cursor) until a notification with `indexedAt <= max(watermark, now − 2 h)` is reached or 5 pages have been read; take everything newer. The 2 h floor is the same stale horizon as §5 step 0, so a watermark frozen by a long reconnect gap or outage can never cause a backlog of old likes. After a successful scan, set `watermark` to the newest `indexedAt` seen (unchanged if nothing new). The 5-page ceiling bounds a single tick at 250 notifications; anything older than that after a viral spike is deliberately dropped, which is acceptable for a courtesy feature and keeps the tick inside the wall clock.
 
 ### 4.2 Candidate test (fixed, not settings)
 
@@ -116,7 +116,7 @@ The ledger reason is the first rule that fails. Reason codes are stable strings 
 | 1 | skip labeled | any label on `author.labels` whose `src` is **not** `author.did` (self-labels are ignored), which is not negated (`neg` falsy), and whose value is not an adult-content classification (`porn`, `sexual`, `nudity`, `sexual-figurative`, `graphic-media`). Bluesky's own moderation applies those to accounts that never self-labelled; they describe content, not conduct, and must never skip this user's audience | `labeled` |
 | 2 | min account age | `author.createdAt` missing, or newer than N days before now | `account_age` |
 | 3 | skip no avatar | `author.avatar` missing or empty | `no_avatar` |
-| 4 | skip links | reply `record.facets` contains any `app.bsky.richtext.facet#link` feature, **or** `record.embed` is `app.bsky.embed.external` (or a `recordWithMedia` wrapping one), **or** the text, after stripping `@handle` mentions, matches a conservative URL pattern: `https?://` (any case), a lowercase bare host on an unambiguous TLD (`.com`, `.net`, `.org`, `.io`, `.app`, …) with or without a path, or a lowercase bare host on a TLD that is also a common word (`.it`, `.me`, `.us`, `.de`, `.es`, `.co`, …) only when followed by `/`. Mentions, sentence-case words after a missing space ("love it.It is") and handles are deliberately not links | `links` |
+| 4 | skip links | reply `record.facets` contains any `app.bsky.richtext.facet#link` feature, **or** `record.embed` is `app.bsky.embed.external` (or a `recordWithMedia` wrapping one), **or** the text, after stripping `@handle` mentions, matches a conservative URL pattern: `https?://` (any case), a bare host (any case in the name, lowercase TLD) on an unambiguous TLD (`.com`, `.net`, `.org`, `.io`, `.app`, `.ee`, `.ai`, …) with or without a path, or such a host on a TLD that is also a common word (`.it`, `.me`, `.us`, `.de`, `.es`, `.co`, …) only when followed by `/`. Mentions, sentence-case words after a missing space ("love it.It is") and handles are deliberately not links | `links` |
 | 5 | min followers | `followersCount < N`, from a batched `app.bsky.actor.getProfiles` call (≤ 25 DIDs per call) made only for candidates that survived rules 1–4. A DID missing from the response (deactivated account) counts as 0 followers. If the lookup call itself fails, the whole scan is abandoned without advancing the watermark and retried next tick (§7) | `followers` |
 | 6 | daily cap | likes with `liked_at` in the last 24 h plus currently `queued` events ≥ cap | `cap` |
 
@@ -136,7 +136,8 @@ Select up to 20 `queued` events for the user with `due_at <= now()`, oldest firs
 0. If `due_at` is more than 2 hours in the past (the account was disconnected, or the function was down), mark `skipped`/`stale` rather than liking a days-old reply.
 1. Re-check the cap (likes in the last 24 h ≥ cap → mark `skipped`/`cap`; the queued reservation from §4.3 rule 6 makes this rare).
 2. `POST /xrpc/com.atproto.repo.createRecord` with collection `app.bsky.feed.like`, record `{ $type, subject: { uri: reply_uri, cid: reply_cid }, createdAt }`.
-3. On 2xx → `decision = 'liked'`, `liked_at = now()`.
+2b. For a retry (`attempts > 0`), first `GET app.bsky.feed.getPosts?uris=<reply>`: if `viewer.like` is already set the earlier attempt actually succeeded, so mark `liked` without liking again; if the post is gone mark `failed`/`gone`. This closes the case where a like was committed but its response was lost.
+3. On 2xx → `decision = 'liked'`, `liked_at = now()`. The deadline is re-checked immediately before each like call, so a like never starts late enough to outlive the lease.
 4. On a permanent error (4xx other than 401/429, including a deleted reply) → `decision = 'failed'`, `reason = 'http_<status>'`.
 5. On 429 or 5xx or a network error → `attempts += 1`, leave `queued`; after 5 attempts → `failed`/`gave_up`.
 6. On 401 → the session is dead: `refreshIfNeeded` already ran, so treat as `reauth` (§7) and stop this user's pass.
@@ -148,6 +149,7 @@ Likes are spaced by the adapter's existing 1 s `pacingMs`. Bluesky's PDS write b
 Three methods on the Bluesky adapter, all using the existing `authHeaders`, `FETCH_TIMEOUT_MS` and `httpError` classification:
 
 - `listNotifications(tokens, { reasons, cursor, limit })` → `{ notifications, cursor }` typed to the fields §4 reads.
+- `getPost(tokens, uri)` → `{ viewerLike? } | null`, used only on retries (§5 step 2b).
 - `getProfiles(tokens, dids)` → map DID → `{ followersCount }` (chunking to 25 is the caller's job, tested).
 - `like(tokens, { uri, cid })` → `{ uri }` of the like record.
 
@@ -163,7 +165,7 @@ The `Adapter` interface is **not** widened (X has no equivalent and must never g
 
 ## 8. UI (Accounts tab)
 
-A new `Card title="Auto-like replies"` placed directly under the Bluesky card. When no Bluesky account is connected the card body is a single muted line: "Connect Bluesky to use this."
+A new `Card title="Auto-like replies"` placed directly under the Bluesky card. When no Bluesky account is connected the card body is a single muted line: "Connect Bluesky to use this."; when the account needs reconnecting, "Reconnect Bluesky to use this."
 
 Contents, top to bottom:
 
@@ -172,7 +174,7 @@ Contents, top to bottom:
 3. **Checkboxes** (saved on change): Skip replies containing links; Skip accounts with no profile photo; Skip accounts with moderation labels.
 4. **Fixed note** (muted): "Blocked and muted accounts, and your own replies, are always skipped. Replies are liked 2–30 minutes after they arrive."
 5. **Stats line**: "Liked today N · last 7 days M" from two cheap counts over `auto_like_events`.
-6. **Recent activity**: last 50 events, newest first, each one row: `@handle · liked` / `· skipped — reason text` / `· queued` / `· failed — reason` with a relative time. Reason text map: labeled → "moderation label", account_age → "account too new", no_avatar → "no profile photo", links → "contains a link", followers → "too few followers", cap → "daily limit reached", blocked → "blocked", muted → "muted", gave_up → "Bluesky kept erroring", http_4xx → "rejected by Bluesky".
+6. **Recent activity**: last 50 events, newest first, each one row: `@handle · liked` / `· skipped — reason text` / `· queued` / `· failed — reason` with a relative time. Reason text map: labeled → "moderation label", account_age → "account too new", no_avatar → "no profile photo", links → "contains a link", followers → "too few followers", cap → "daily limit reached", blocked → "blocked", muted → "muted", stale → "too late to like", gave_up → "Bluesky kept erroring", gone → "reply was deleted", http_4xx / rejected → "rejected by Bluesky".
 7. **Error notice** when `auto_like_state.last_error` is set.
 
 Data access from the PWA: `settings` (existing), `auto_like_state` (own row select), `auto_like_events` (own rows select, limit 50 plus two counts), and the `auto_like_enable` RPC. New helpers go in `app/src/lib/autolike.ts`; `Accounts.tsx` is already ~450 lines, so the card is its own component `app/src/components/AutoLikeCard.tsx`.
