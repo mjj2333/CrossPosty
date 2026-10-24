@@ -26,7 +26,9 @@ Each tick:
    - **Scan pass** (§4).
    - **Like pass** (§5).
    - Write `auto_like_state.last_run_at`, and `last_error` (null on success, message on failure).
-3. Respect the function wall clock the same way `run-due-posts` does: stop starting new users once ~45 s have elapsed and report them as skipped in the response summary. Remaining users are picked up next minute; nothing is lost because the watermark only advances for users that completed their scan.
+3. Respect the function wall clock the same way `run-due-posts` does: stop starting new users once ~45 s have elapsed and report them as skipped in the response summary. Inside a user, the same deadline stops the page loop and the like loop early (whatever was fetched is still processed; unliked events stay queued). Remaining users are picked up next minute; nothing is lost because the watermark only advances for users that completed their scan.
+4. **Run lease.** Ticks can overlap (a slow tick runs past the next cron fire), and a like is not idempotent on Bluesky. Each user run first claims `auto_like_state.run_lease_until` with a conditional update (`where run_lease_until is null or run_lease_until < now()`), holding it for 90 s; a tick that fails to claim reports `skipped: previous run still in progress` and does nothing. `setRunResult` releases the lease. Dry runs do not claim.
+5. **Scan and like passes are independent.** A scan failure (transient or permanent) is recorded in `last_error` but the like pass still runs, so a bad notification can never freeze a user's queue. A `reauth` error from either pass marks the account and stops everything.
 
 Response body: `{ users: n, summary: [{ user_id, scanned, queued, skipped, liked, failed, error? }] }`. A `?dry_run=1` query parameter (still cron-secret-authenticated) runs the scan pass and returns each decision in the response (`dry: [{ handle, uri, outcome, reason }]`) instead of writing events; it performs no likes, writes nothing to the ledger or state, and does not advance the watermark. An optional `&lookback=<minutes>` moves the watermark back for that dry scan only, so the rules can be checked against replies that already exist on the test account.
 
@@ -54,11 +56,14 @@ Check constraints enforce the ranges. Existing `settings` grants and the "own se
 | `watermark` | timestamptz not null | Only notifications with `indexedAt > watermark` are considered. Set to `now()` when the feature is switched on. |
 | `last_run_at` | timestamptz | |
 | `last_error` | text | Shown on the card; null when the last run succeeded. |
+| `run_lease_until` | timestamptz | Set by `claimRun`, cleared by `setRunResult` (§2 item 4). |
 | `updated_at` | timestamptz | `set_updated_at` trigger like the other tables. |
+
+`setWatermark` only ever moves the watermark forward (`where watermark < new`), so a slower overlapping tick cannot regress it.
 
 Written only by the service role. Authenticated users may `select` their own row (RLS), so the card can show the last error.
 
-Switching on is done by a security-definer RPC `auto_like_enable()` that upserts the state row with `watermark = now()`, clears `last_error`, and sets `settings.auto_like_enabled = true` in one transaction, so a stale watermark from a previous enablement can never cause a backfill. Switching off is a plain settings update; the state row is kept.
+Switching on is done by a security-definer RPC `auto_like_enable()` that upserts the state row with `watermark = now()`, clears `last_error`, marks any still-`queued` events as `skipped`/`stale`, and sets `settings.auto_like_enabled = true` in one transaction, so a stale watermark or an old queue from a previous enablement can never cause a burst of late likes. Switching off is a plain settings update; the state row is kept.
 
 ### 3.3 `auto_like_events` (ledger, one row per reply considered)
 
@@ -126,6 +131,7 @@ A setting that is off makes its rule pass. Rules 1–4 use fields already presen
 
 Select up to 20 `queued` events for the user with `due_at <= now()`, oldest first. For each:
 
+0. If `due_at` is more than 2 hours in the past (the account was disconnected, or the function was down), mark `skipped`/`stale` rather than liking a days-old reply.
 1. Re-check the cap (likes in the last 24 h ≥ cap → mark `skipped`/`cap`; the queued reservation from §4.3 rule 6 makes this rare).
 2. `POST /xrpc/com.atproto.repo.createRecord` with collection `app.bsky.feed.like`, record `{ $type, subject: { uri: reply_uri, cid: reply_cid }, createdAt }`.
 3. On 2xx → `decision = 'liked'`, `liked_at = now()`.
