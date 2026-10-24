@@ -28,7 +28,7 @@ Each tick:
    - Write `auto_like_state.last_run_at`, and `last_error` (null on success, message on failure).
 3. Respect the function wall clock the same way `run-due-posts` does: stop starting new users once ~45 s have elapsed and report them as skipped in the response summary. Remaining users are picked up next minute; nothing is lost because the watermark only advances for users that completed their scan.
 
-Response body: `{ users: n, summary: [{ user_id, scanned, queued, skipped, liked, failed, error? }] }`. A `?dry_run=1` query parameter (still cron-secret-authenticated) runs the scan pass and records decisions with `decision = 'dry'` but performs no likes and does not advance the watermark, for checking the rules against the test account before enabling it for anyone else.
+Response body: `{ users: n, summary: [{ user_id, scanned, queued, skipped, liked, failed, error? }] }`. A `?dry_run=1` query parameter (still cron-secret-authenticated) runs the scan pass and returns each decision in the response (`dry: [{ handle, uri, outcome, reason }]`) instead of writing events; it performs no likes, writes nothing to the ledger or state, and does not advance the watermark. An optional `&lookback=<minutes>` moves the watermark back for that dry scan only, so the rules can be checked against replies that already exist on the test account.
 
 ## 3. Data model
 
@@ -70,7 +70,7 @@ Switching on is done by a security-definer RPC `auto_like_enable()` that upserts
 | `reply_cid` | text not null | needed for the like record's `subject` |
 | `author_did` | text not null | |
 | `author_handle` | text not null | snapshot at decision time, for display |
-| `decision` | text not null, check in (`queued`,`liked`,`skipped`,`failed`,`dry`) | |
+| `decision` | text not null, check in (`queued`,`liked`,`skipped`,`failed`) | |
 | `reason` | text | skip/failure reason code (§4.3); null for `queued`/`liked` |
 | `due_at` | timestamptz | set for `queued`; the random delay |
 | `attempts` | integer not null default 0 | like attempts |
@@ -110,7 +110,7 @@ The ledger reason is the first rule that fails. Reason codes are stable strings 
 | 2 | min account age | `author.createdAt` missing, or newer than N days before now | `account_age` |
 | 3 | skip no avatar | `author.avatar` missing or empty | `no_avatar` |
 | 4 | skip links | reply `record.facets` contains any `app.bsky.richtext.facet#link` feature, **or** `record.embed` is `app.bsky.embed.external` (or a `recordWithMedia` wrapping one), **or** the text matches a conservative URL pattern (`https?://` or a bare `word.tld/`-shaped token) | `links` |
-| 5 | min followers | `followersCount < N`, from a batched `app.bsky.actor.getProfiles` call (≤ 25 DIDs per call) made only for candidates that survived rules 1–4; if the lookup fails the candidate is deferred (not recorded) and retried next tick | `followers` |
+| 5 | min followers | `followersCount < N`, from a batched `app.bsky.actor.getProfiles` call (≤ 25 DIDs per call) made only for candidates that survived rules 1–4. A DID missing from the response (deactivated account) counts as 0 followers. If the lookup call itself fails, the whole scan is abandoned without advancing the watermark and retried next tick (§7) | `followers` |
 | 6 | daily cap | likes with `liked_at` in the last 24 h plus currently `queued` events ≥ cap | `cap` |
 
 A setting that is off makes its rule pass. Rules 1–4 use fields already present on the notification's `author` (`ProfileView` carries `viewer`, `labels`, `avatar`, `createdAt`), so they cost no extra calls.
@@ -120,7 +120,7 @@ A setting that is off makes its rule pass. Rules 1–4 use fields already presen
 - Pass → insert `queued` with `due_at = now() + random(2 min … 30 min)`.
 - Fail → insert `skipped` with the reason.
 - Inserts use `on conflict (user_id, reply_uri) do nothing` so a watermark overlap or a re-run is harmless.
-- Dry run → insert `dry` with `reason` set to the rule that would have failed, or null if it would have been queued.
+- Dry run → nothing is inserted; the decision (`queue`, or `skip` plus reason) is returned in the response.
 
 ## 5. Like pass
 
@@ -172,11 +172,11 @@ Data access from the PWA: `settings` (existing), `auto_like_state` (own row sele
 ## 9. Testing
 
 - **Decision rules** (`_shared/auto-like.test.ts`): `decide(notification, settings, followers)` is a pure function. Fixtures: a clean reply (queued); each fixed exclusion (not-direct-reply, self, blocked, blockedBy, muted, mutedByList); each adjustable rule on and off; a self-label that must be ignored vs a labeler label that must not; links via facet, via external embed, via bare text; ordering (a reply failing both labeled and links reports `labeled`).
-- **Scan/like orchestration** (same file, stub adapter + stub db as in `job.test.ts`): watermark advances only after a successful scan; nothing older than the watermark is considered; page walking stops at the watermark and at 5 pages; the delay lands in 2–30 min; cap counts liked + queued; like pass retries then gives up at 5; 401 marks reconnect and stops; one user's throw does not stop the next; dry run records `dry` and leaves the watermark alone.
+- **Scan/like orchestration** (same file, stub adapter + stub db as in `job.test.ts`): watermark advances only after a successful scan; nothing older than the watermark is considered; page walking stops at the watermark and at 5 pages; the delay lands in 2–30 min; cap counts liked + queued; like pass retries then gives up at 5; 401 marks reconnect and stops; one user's throw does not stop the next; dry run writes nothing, likes nothing and leaves the watermark alone.
 - **Adapter** (`bluesky.test.ts`): fake-fetch tests for `listNotifications` (query string, cursor passthrough), `getProfiles` (DID list encoding), `like` (record shape and `subject`).
 - **Migration/RPC**: `auto_like_enable` sets the watermark and the flag atomically (checked in the live smoke below, not unit-tested).
 - **Live check**: `deno task autolike-dry` calls the function with `?dry_run=1` against the linked project and prints the summary; run against the owner's test account with a few deliberate replies before enabling for anyone else.
-- **PWA**: `AutoLikeCard` gets a vitest for the reason-text mapping and the disabled state when no Bluesky account exists, in the same style as `PostResultCard.test.ts`.
+- **PWA**: the helpers in `app/src/lib/autolike.ts` get a vitest for the reason-text mapping and the number-field clamping, in the same style as `PostResultCard.test.ts`. The test runner has no DOM, so the card itself is checked by hand at phone width.
 
 ## 10. Out of scope
 
