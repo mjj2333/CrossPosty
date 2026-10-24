@@ -94,7 +94,7 @@ Retention: the existing daily `cleanup-media` run deletes `auto_like_events` old
 A notification becomes a candidate only if all hold:
 
 - `reason === 'reply'`.
-- `record.reply.parent.uri` starts with `at://<user DID>/` — a **direct** reply to a post she authored. Replies deeper in the thread (parent is someone else's post, even under her root) are ignored.
+- `record.reply.parent.uri` starts with `at://<user DID>/` — a **direct** reply to a post she authored. Replies deeper in the thread (parent is someone else's post, even under her root) are ignored. No fallback to `reasonSubject`, which may name the root rather than the parent.
 - `author.did !== <user DID>` (her own replies are ignored).
 - Not blocked or muted in either direction: `author.viewer.blocking`, `author.viewer.blockedBy`, `author.viewer.blockingByList` and `author.viewer.muted` (which is true for list mutes as well; `mutedByList` is also checked defensively) must all be absent or falsy.
 
@@ -106,10 +106,10 @@ The ledger reason is the first rule that fails. Reason codes are stable strings 
 
 | Order | Setting | Rule | Reason code |
 |---|---|---|---|
-| 1 | skip labeled | any label on `author.labels` whose `src` is **not** `author.did` (self-labels such as adult-content tags are ignored; only labels applied by a moderation service count) and which is not negated (`neg` falsy) | `labeled` |
+| 1 | skip labeled | any label on `author.labels` whose `src` is **not** `author.did` (self-labels are ignored), which is not negated (`neg` falsy), and whose value is not an adult-content classification (`porn`, `sexual`, `nudity`, `sexual-figurative`, `graphic-media`). Bluesky's own moderation applies those to accounts that never self-labelled; they describe content, not conduct, and must never skip this user's audience | `labeled` |
 | 2 | min account age | `author.createdAt` missing, or newer than N days before now | `account_age` |
 | 3 | skip no avatar | `author.avatar` missing or empty | `no_avatar` |
-| 4 | skip links | reply `record.facets` contains any `app.bsky.richtext.facet#link` feature, **or** `record.embed` is `app.bsky.embed.external` (or a `recordWithMedia` wrapping one), **or** the text matches a conservative URL pattern (`https?://` or a bare `word.tld/`-shaped token) | `links` |
+| 4 | skip links | reply `record.facets` contains any `app.bsky.richtext.facet#link` feature, **or** `record.embed` is `app.bsky.embed.external` (or a `recordWithMedia` wrapping one), **or** the text, after stripping `@handle` mentions, matches a conservative URL pattern: `https?://` (any case), a lowercase bare host on an unambiguous TLD (`.com`, `.net`, `.org`, `.io`, `.app`, …) with or without a path, or a lowercase bare host on a TLD that is also a common word (`.it`, `.me`, `.us`, `.de`, `.es`, `.co`, …) only when followed by `/`. Mentions, sentence-case words after a missing space ("love it.It is") and handles are deliberately not links | `links` |
 | 5 | min followers | `followersCount < N`, from a batched `app.bsky.actor.getProfiles` call (≤ 25 DIDs per call) made only for candidates that survived rules 1–4. A DID missing from the response (deactivated account) counts as 0 followers. If the lookup call itself fails, the whole scan is abandoned without advancing the watermark and retried next tick (§7) | `followers` |
 | 6 | daily cap | likes with `liked_at` in the last 24 h plus currently `queued` events ≥ cap | `cap` |
 
